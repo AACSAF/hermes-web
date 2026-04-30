@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary:    #0a0a0f;
+      --bg-secondary:  #12121a;
+      --bg-tertiary:   #1a1a26;
+      --bg-hover:      #22223a;
+      --bg-input:      #16161f;
+      --border:        #2a2a3e;
+      --border-light:  #3a3a55;
+      --text-primary:  #e8e8f0;
+      --text-secondary:#8888a8;
+      --text-muted:    #55556e;
+      --accent:        #7c5cff;
+      --accent-hover:  #9370ff;
+      --accent-glow:   rgba(124, 92, 255, 0.25);
+      --success:       #4ade80;
+      --success-dim:   rgba(74,222,128,0.15);
+      --error:         #f87171;
+      --error-dim:     rgba(248,113,113,0.15);
+      --warn:          #fbbf24;
+      --warn-dim:      rgba(251,191,36,0.15);
+      --cyan:          #22d3ee;
+      --cyan-dim:      rgba(34,211,238,0.12);
+      --user-bg:       #1e1e38;
+      --bot-bg:        #161620;
+      --scrollbar-bg:  #1a1a26;
+      --scrollbar-thumb:#3a3a55;
+    }
+
+    html, body {
+      height: 100%; width: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    /* ─── App Shell ────────────────────────────────────── */
+    .app { display: flex; height: 100vh; }
+
+    /* ─── Sidebar ──────────────────────────────────────── */
+    .sidebar {
+      width: 160px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      align-items: stretch;
+      padding: 16px 10px;
+      gap: 4px;
+    }
+
+    .sidebar .logo {
+      width: 100%; height: 40px;
+      background: linear-gradient(135deg, var(--accent), #b388ff);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 16px var(--accent-glow);
+      color: #fff;
+    }
+    .sidebar .logo-icon { font-size: 18px; }
+
+    .sidebar .nav-btn {
+      width: 100%; height: 42px;
+      border: none; background: transparent;
+      border-radius: 10px; cursor: pointer;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 14px;
+      font-size: 13px; color: var(--text-muted);
+      transition: all 0.2s;
+      position: relative;
+    }
+    .sidebar .nav-btn .nav-icon { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+    .sidebar .nav-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .sidebar .nav-btn.active {
+      background: var(--accent-glow); color: var(--accent);
+    }
+    .sidebar .nav-btn.active::before {
+      content: ''; position: absolute; left: -10px;
+      width: 3px; height: 20px; background: var(--accent);
+      border-radius: 0 3px 3px 0;
+    }
+
+    .sidebar .spacer { flex: 1; }
+
+    .sidebar .nav-btn .badge {
+      position: absolute; top: 8px; right: 12px;
+      width: 7px; height: 7px; border-radius: 50%;
+    }
+    .badge.online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .badge.offline { background: var(--error); }
+
+    /* ─── Panels ───────────────────────────────────────── */
+    .panel { display: none; flex: 1; flex-direction: column; min-width: 0; }
+    .panel.active { display: flex; }
+
+    /* ─── Panel Header ─────────────────────────────────── */
+    .panel-header {
+      height: 56px; padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+      display: flex; align-items: center; gap: 12px;
+      flex-shrink: 0;
+    }
+    .panel-header h2 { font-size: 16px; font-weight: 600; }
+    .panel-header .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+    /* ─── Status Badge ─────────────────────────────────── */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 500;
+    }
+    .status-badge.connected { background: var(--success-dim); color: var(--success); }
+    .status-badge.disconnected { background: var(--error-dim); color: var(--error); }
+    .status-badge.connecting { background: var(--warn-dim); color: var(--warn); }
+    .status-badge .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+    }
+
+    /* ═══════════════════════════════════════════════════ */
+    /* ============ MT5 PANEL ============================ */
+    /* ═══════════════════════════════════════════════════ */
+    .mt5-content {
+      flex: 1; overflow-y: auto; padding: 24px;
+    }
+
+    .mt5-connect-overlay {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 24px;
+      padding: 40px;
+    }
+
+    .mt5-connect-overlay .icon {
+      width: 80px; height: 80px;
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border-light);
+      border-radius: 20px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px;
+    }
+
+    .mt5-connect-overlay h3 { font-size: 20px; font-weight: 600; }
+    .mt5-connect-overlay p { color: var(--text-secondary); font-size: 14px; text-align: center; max-width: 360px; }
+
+    .btn {
+      padding: 10px 24px; border: none; border-radius: 10px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 4px 16px var(--accent-glow); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 8px; }
+    .btn-outline { background: transparent; border: 1.5px solid var(--border-light); color: var(--text-secondary); }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ─── MT5 Dashboard Grid ───────────────────────────── */
+    .mt5-dashboard { display: none; flex-direction: column; gap: 20px; }
+    .mt5-dashboard.visible { display: flex; }
+
+    /* Account Overview Cards */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: var(--border-light); }
+    .card .card-label {
+      font-size: 12px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .card .card-value {
+      font-size: 22px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .card .card-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .card .card-value.profit-pos { color: var(--success); }
+    .card .card-value.profit-neg { color: var(--error); }
+
+    /* Account Info Bar */
+    .account-info-bar {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 20px;
+      display: flex; flex-wrap: wrap; gap: 24px; align-items: center;
+    }
+    .account-info-bar .info-item {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .account-info-bar .info-label {
+      font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .account-info-bar .info-value {
+      font-size: 14px; font-weight: 600;
+    }
+
+    /* ─── Sections ─────────────────────────────────────── */
+    .section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .section-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .section-header h3 { font-size: 14px; font-weight: 600; }
+    .section-header .count {
+      background: var(--bg-tertiary); padding: 2px 10px;
+      border-radius: 10px; font-size: 12px; color: var(--text-secondary);
+    }
+
+    /* ─── Table ────────────────────────────────────────── */
+    .mt5-table { width: 100%; border-collapse: collapse; }
+    .mt5-table th {
+      text-align: left; padding: 10px 16px;
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-tertiary);
+    }
+    .mt5-table td {
+      padding: 12px 16px; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+    .mt5-table tr:last-child td { border-bottom: none; }
+    .mt5-table tr:hover td { background: var(--bg-hover); }
+
+    .type-buy { color: var(--success); font-weight: 600; }
+    .type-sell { color: var(--error); font-weight: 600; }
+
+    .empty-state {
+      padding: 40px; text-align: center;
+      color: var(--text-muted); font-size: 14px;
+    }
+
+    /* ═══════════════════════════════════════════════════ */
+    /* ============ CHAT PANEL =========================== */
+    /* ═══════════════════════════════════════════════════ */
+
+    .chat-layout { display: flex; flex: 1; min-height: 0; }
+
+    /* Session sidebar */
+    .chat-sidebar {
+      width: 240px; min-width: 240px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+    }
+    .chat-sidebar .new-chat-btn {
+      margin: 12px 14px; padding: 10px;
+      background: transparent; border: 1.5px dashed var(--border-light);
+      border-radius: 10px; color: var(--text-secondary);
+      font-size: 13px; cursor: pointer;
+      transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .chat-sidebar .new-chat-btn:hover {
+      border-color: var(--accent); color: var(--accent); background: var(--accent-glow);
+    }
+    .sessions-list { flex: 1; overflow-y: auto; padding: 6px 10px; }
+    .session-item {
+      padding: 10px 12px; border-radius: 8px; cursor: pointer;
+      margin-bottom: 3px; transition: all 0.15s;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .session-item:hover { background: var(--bg-hover); }
+    .session-item.active { background: var(--accent-glow); border: 1px solid var(--accent); }
+    .session-item .sn { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+    .session-item .sm { font-size: 10px; color: var(--text-muted); }
+    .session-item .del-btn {
+      opacity: 0; background: none; border: none; color: var(--text-muted);
+      cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; transition: all 0.15s;
+    }
+    .session-item:hover .del-btn { opacity: 1; }
+    .session-item .del-btn:hover { color: var(--error); background: var(--error-dim); }
+
+    /* Chat main */
+    .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    .messages {
+      flex: 1; overflow-y: auto; padding: 20px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+
+    .welcome-screen {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px; opacity: 0.7;
+    }
+    .welcome-screen .wl { width: 60px; height: 60px; background: linear-gradient(135deg, var(--accent), #b388ff); border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 28px; box-shadow: 0 6px 24px var(--accent-glow); }
+    .welcome-screen h2 { font-size: 22px; background: linear-gradient(135deg, var(--accent), #b388ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .welcome-screen p { color: var(--text-secondary); font-size: 13px; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; justify-content: center; max-width: 460px; }
+    .quick-action {
+      padding: 8px 14px; background: var(--bg-tertiary); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: all 0.2s;
+    }
+    .quick-action:hover { border-color: var(--accent); color: var(--text-primary); background: var(--accent-glow); }
+
+    .message { display: flex; gap: 10px; max-width: 760px; width: 100%; margin: 0 auto; animation: fadeIn 0.25s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .message .avatar { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+    .message.user .avatar { background: linear-gradient(135deg, #3b82f6, #60a5fa); }
+    .message.assistant .avatar { background: linear-gradient(135deg, var(--accent), #b388ff); }
+    .message .content { flex: 1; min-width: 0; }
+    .message .content .role { font-size: 11px; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary); }
+    .message .content .text { font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+    .message .content .text code { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 12px; }
+    .message .content .text pre { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 12px; line-height: 1.5; }
+    .message .content .text pre code { background: none; padding: 0; }
+
+    .typing-indicator { display: none; max-width: 760px; width: 100%; margin: 0 auto; gap: 10px; }
+    .typing-indicator.visible { display: flex; }
+    .typing-dots { display: flex; gap: 4px; padding: 10px 0; }
+    .typing-dots span { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; animation: bounce 1.4s infinite; }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+
+    .input-area { padding: 16px 20px 20px; border-top: 1px solid var(--border); background: var(--bg-secondary); }
+    .input-wrapper { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+    .input-box {
+      flex: 1; background: var(--bg-input); border: 1.5px solid var(--border);
+      border-radius: 12px; padding: 12px 16px; color: var(--text-primary);
+      font-size: 14px; font-family: inherit; resize: none;
+      min-height: 44px; max-height: 180px; outline: none; transition: border-color 0.2s; line-height: 1.5;
+    }
+    .input-box::placeholder { color: var(--text-muted); }
+    .input-box:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    .send-btn {
+      width: 44px; height: 44px; background: var(--accent); border: none;
+      border-radius: 12px; color: white; font-size: 18px; cursor: pointer;
+      transition: all 0.2s; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .send-btn:hover { background: var(--accent-hover); transform: scale(1.05); }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .input-hint { max-width: 760px; margin: 6px auto 0; font-size: 10px; color: var(--text-muted); text-align: center; }
+
+    /* ─── Toast ─────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(16px);
+      background: var(--bg-tertiary); border: 1px solid var(--border);
+      padding: 8px 18px; border-radius: 10px; font-size: 13px;
+      opacity: 0; transition: all 0.3s; z-index: 1000; pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { border-color: var(--error); color: var(--error); }
+
+    /* ─── Loading spinner ──────────────────────────────── */
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Left Nav -->
+    <nav class="sidebar">
+      <div class="logo"><span class="logo-icon">⚡</span> Hermes</div>
+      <button class="nav-btn active" id="navChat" onclick="switchPanel('chat')">
+        <span class="nav-icon">💬</span> AI 对话
+      </button>
+      <button class="nav-btn" id="navMt5" onclick="switchPanel('mt5')">
+        <span class="nav-icon">📈</span> MT5 交易
+        <span class="badge offline" id="mt5Badge"></span>
+      </button>
+      <div class="spacer"></div>
+      <div style="padding:8px 14px;font-size:11px;color:var(--text-muted);line-height:1.5;">
+        v0.11 · MiMo
+      </div>
+    </nav>
+
+    <!-- ═══ CHAT PANEL ═══ -->
+    <div class="panel active" id="panelChat">
+      <div class="chat-layout">
+        <div class="chat-sidebar">
+          <button class="new-chat-btn" onclick="newChat()">＋ 新对话</button>
+          <div class="sessions-list" id="sessionsList"></div>
+        </div>
+        <div class="chat-main">
+          <div class="messages" id="messages">
+            <div class="welcome-screen" id="welcomeScreen">
+              <div class="wl">⚡</div>
+              <h2>Hermes Agent</h2>
+              <p>你的 AI 助手，拥有完整的工具链访问能力</p>
+              <div class="quick-actions">
+                <div class="quick-action" onclick="sendQuick('帮我查看当前系统信息')">🖥️ 系统信息</div>
+                <div class="quick-action" onclick="sendQuick('帮我写一个 Python 快速排序')">🐍 写代码</div>
+                <div class="quick-action" onclick="sendQuick('搜索最新的 AI 新闻')">🔍 搜索</div>
+                <div class="quick-action" onclick="sendQuick('介绍一下你自己')">💬 了解 Hermes</div>
+              </div>
+            </div>
+            <div class="typing-indicator" id="typing">
+              <div class="avatar" style="background:linear-gradient(135deg,var(--accent),#b388ff)">⚡</div>
+              <div class="typing-dots"><span></span><span></span><span></span></div>
+            </div>
+          </div>
+          <div class="input-area">
+            <div class="input-wrapper">
+              <textarea class="input-box" id="inputBox" placeholder="输入消息... (Shift+Enter 换行)" rows="1"></textarea>
+              <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+            <div class="input-hint">Enter 发送 · Shift+Enter 换行</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ MT5 PANEL ═══ -->
+    <div class="panel" id="panelMt5">
+      <div class="panel-header">
+        <h2>📈 MetaTrader 5</h2>
+        <div class="header-right">
+          <span class="status-badge disconnected" id="mt5Status">
+            <span class="dot"></span> 未连接
+          </span>
+          <button class="btn btn-primary btn-sm" id="connectBtn" onclick="mt5Connect()">
+            ⚡ 连接 MT5
+          </button>
+          <button class="btn btn-outline btn-sm" id="refreshBtn" onclick="mt5Refresh()" style="display:none">
+            🔄 刷新
+          </button>
+        </div>
+      </div>
+
+      <!-- Connect Overlay -->
+      <div class="mt5-connect-overlay" id="mt5Overlay">
+        <div class="icon">📈</div>
+        <h3>连接 MetaTrader 5</h3>
+        <p id="mt5OverlayMsg">点击上方按钮连接 MT5 客户端，获取账户信息、持仓和订单数据。</p>
+        <button class="btn btn-primary" onclick="mt5Connect()" id="overlayConnectBtn">
+          ⚡ 连接 MT5
+        </button>
+      </div>
+
+      <!-- Dashboard (hidden until connected) -->
+      <div class="mt5-content mt5-dashboard" id="mt5Dashboard">
+        <!-- Account Info Bar -->
+        <div class="account-info-bar" id="accountInfoBar"></div>
+
+        <!-- Key Metrics Cards -->
+        <div class="cards-grid" id="cardsGrid"></div>
+
+        <!-- Open Positions -->
+        <div class="section" id="positionsSection">
+          <div class="section-header">
+            <h3>📊 持仓</h3>
+            <span class="count" id="posCount">0</span>
+          </div>
+          <div id="positionsBody"></div>
+        </div>
+
+        <!-- Pending Orders -->
+        <div class="section" id="ordersSection">
+          <div class="section-header">
+            <h3>📋 挂单</h3>
+            <span class="count" id="ordCount">0</span>
+          </div>
+          <div id="ordersBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ══════════════════════════════════════════════════════
+    // State
+    // ══════════════════════════════════════════════════════
+    let currentSessionId = null;
+    let isSending = false;
+    let mt5Connected = false;
+    const chatSessions = {};
+
+    const $ = id => document.getElementById(id);
+
+    // ══════════════════════════════════════════════════════
+    // Panel Switching
+    // ══════════════════════════════════════════════════════
+    function switchPanel(name) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.sidebar .nav-btn').forEach(b => b.classList.remove('active'));
+      $('panel' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+      $('nav' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Toast
+    // ══════════════════════════════════════════════════════
+    function showToast(msg, isError = false) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isError ? ' error' : '');
+      setTimeout(() => t.className = 'toast', 3000);
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Chat Logic
+    // ══════════════════════════════════════════════════════
+    $('inputBox').addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+    });
+    $('inputBox').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    function escHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+    function appendMsg(role, text, animate = true) {
+      $('welcomeScreen').style.display = 'none';
+      const d = document.createElement('div');
+      d.className = 'message ' + role;
+      if (!animate) d.style.animation = 'none';
+      const av = role === 'user' ? '🧑' : '⚡';
+      const rn = role === 'user' ? 'You' : 'Hermes';
+      let html = escHtml(text);
+      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      d.innerHTML = `<div class="avatar">${av}</div><div class="content"><div class="role">${rn}</div><div class="text">${html}</div></div>`;
+      $('messages').insertBefore(d, $('typing'));
+      $('messages').scrollTop = $('messages').scrollHeight;
+    }
+
+    async function loadSessions() {
+      try {
+        const r = await fetch('/api/sessions');
+        const d = await r.json();
+        $('sessionsList').innerHTML = '';
+        for (const [s, i] of Object.entries(d)) { chatSessions[s] = i; addSessionEl(s, i); }
+      } catch(e) {}
+    }
+
+    function addSessionEl(s, i) {
+      const d = document.createElement('div');
+      d.className = 'session-item' + (s === currentSessionId ? ' active' : '');
+      d.id = 'sess-' + s;
+      const t = new Date(i.created).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+      d.innerHTML = `<div><div class="sn">对话 ${s}</div><div class="sm">${i.turns||0} 轮 · ${t}</div></div><button class="del-btn" onclick="event.stopPropagation();delSession('${s}')">✕</button>`;
+      d.onclick = () => switchSession(s);
+      $('sessionsList').prepend(d);
+    }
+
+    async function newChat() {
+      try {
+        const r = await fetch('/api/sessions/new', {method:'POST'});
+        const d = await r.json();
+        currentSessionId = d.session_id;
+        chatSessions[d.session_id] = {created: d.created, turns: 0};
+        clearMsgs(); renderSessList(); $('welcomeScreen').style.display = 'flex';
+        showToast('新对话已创建');
+      } catch(e) { showToast('创建失败', true); }
+    }
+
+    function switchSession(s) {
+      currentSessionId = s;
+      clearMsgs(); renderSessList();
+      if (chatSessions[s] && chatSessions[s].messages) {
+        $('welcomeScreen').style.display = 'none';
+        chatSessions[s].messages.forEach(m => appendMsg(m.role, m.content, false));
+      } else { $('welcomeScreen').style.display = 'flex'; }
+    }
+
+    async function delSession(s) {
+      try {
+        await fetch('/api/sessions/' + s, {method:'DELETE'});
+        delete chatSessions[s];
+        if (s === currentSessionId) { currentSessionId = null; clearMsgs(); $('welcomeScreen').style.display = 'flex'; }
+        renderSessList(); showToast('已删除');
+      } catch(e) { showToast('删除失败', true); }
+    }
+
+    function renderSessList() {
+      document.querySelectorAll('.session-item').forEach(el => el.classList.toggle('active', el.id === 'sess-' + currentSessionId));
+    }
+
+    function clearMsgs() { $('messages').querySelectorAll('.message').forEach(el => el.remove()); }
+
+    async function sendMessage() {
+      const text = $('inputBox').value.trim();
+      if (!text || isSending) return;
+      if (!currentSessionId) await newChat();
+
+      appendMsg('user', text);
+      if (!chatSessions[currentSessionId].messages) chatSessions[currentSessionId].messages = [];
+      chatSessions[currentSessionId].messages.push({role:'user', content:text});
+
+      $('inputBox').value = ''; $('inputBox').style.height = 'auto';
+      isSending = true; $('sendBtn').disabled = true;
+      $('typing').classList.add('visible');
+      $('messages').scrollTop = $('messages').scrollHeight;
+
+      try {
+        const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({message:text, session_id:currentSessionId})});
+        const d = await r.json();
+        if (d.error) { appendMsg('assistant', '⚠️ 错误: ' + d.error); showToast(d.error, true); }
+        else {
+          appendMsg('assistant', d.response);
+          chatSessions[currentSessionId].messages.push({role:'assistant', content:d.response});
+          chatSessions[currentSessionId].turns = (chatSessions[currentSessionId].turns||0) + 1;
+          if (d.session_id && d.session_id !== currentSessionId) currentSessionId = d.session_id;
+          renderSessList();
+        }
+      } catch(e) { appendMsg('assistant', '⚠️ 网络错误: ' + e.message); showToast('发送失败', true); }
+      finally { isSending = false; $('sendBtn').disabled = false; $('typing').classList.remove('visible'); $('messages').scrollTop = $('messages').scrollHeight; }
+    }
+
+    function sendQuick(t) { $('inputBox').value = t; sendMessage(); }
+
+    // ══════════════════════════════════════════════════════
+    // MT5 Logic
+    // ══════════════════════════════════════════════════════
+
+    let mt5AutoRefreshTimer = null;
+    const MT5_REFRESH_INTERVAL = 1000; // 1 second (daemon is fast)
+
+    function setMt5Status(state, text) {
+      const el = $('mt5Status');
+      el.className = 'status-badge ' + state;
+      el.innerHTML = `<span class="dot"></span> ${text}`;
+      const badge = $('mt5Badge');
+      badge.className = 'badge ' + (state === 'connected' ? 'online' : 'offline');
+    }
+
+    function startAutoRefresh() {
+      stopAutoRefresh();
+      mt5AutoRefreshTimer = setInterval(async () => {
+        if (!mt5Connected) return;
+        try {
+          const r = await fetch('/api/mt5/tick');
+          const d = await r.json();
+          if (d.ok) {
+            renderAccount(d.account);
+            renderPositionsData(d.positions, d.pos_count);
+            renderOrdersData(d.orders, d.ord_count);
+          }
+        } catch(e) { /* silent */ }
+      }, MT5_REFRESH_INTERVAL);
+    }
+
+    function stopAutoRefresh() {
+      if (mt5AutoRefreshTimer) {
+        clearInterval(mt5AutoRefreshTimer);
+        mt5AutoRefreshTimer = null;
+      }
+    }
+
+    async function mt5Connect() {
+      const btn = $('connectBtn');
+      const overlayBtn = $('overlayConnectBtn');
+      btn.disabled = true; overlayBtn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> 连接中...';
+      setMt5Status('connecting', '连接中...');
+
+      try {
+        const r = await fetch('/api/mt5/connect', {method:'POST'});
+        const d = await r.json();
+
+        if (d.ok) {
+          mt5Connected = true;
+          setMt5Status('connected', '已连接 · 实时');
+          $('mt5Overlay').style.display = 'none';
+          $('mt5Dashboard').classList.add('visible');
+          $('refreshBtn').style.display = '';
+          renderAccount(d.account);
+          showToast('MT5 连接成功 · 实时刷新');
+          mt5LoadPositions();
+          mt5LoadOrders();
+          startAutoRefresh();
+        } else {
+          setMt5Status('disconnected', '连接失败');
+          $('mt5OverlayMsg').textContent = d.error || '连接失败';
+          showToast(d.error || '连接失败', true);
+        }
+      } catch(e) {
+        setMt5Status('disconnected', '连接失败');
+        showToast('网络错误: ' + e.message, true);
+      }
+
+      btn.disabled = false; overlayBtn.disabled = false;
+      btn.innerHTML = '⚡ 连接 MT5';
+      overlayBtn.innerHTML = '⚡ 连接 MT5';
+    }
+
+    async function mt5Refresh() {
+      $('refreshBtn').disabled = true;
+      try {
+        const r = await fetch('/api/mt5/tick');
+        const d = await r.json();
+        if (d.ok) {
+          renderAccount(d.account);
+          renderPositionsData(d.positions, d.pos_count);
+          renderOrdersData(d.orders, d.ord_count);
+          showToast('已刷新');
+        } else { showToast(d.error, true); }
+      } catch(e) { showToast('刷新失败', true); }
+      $('refreshBtn').disabled = false;
+    }
+
+    function fmtMoney(v, c = 'USD') {
+      return new Intl.NumberFormat('en-US', {style:'currency', currency:c, minimumFractionDigits:2}).format(v);
+    }
+    function fmtNum(v, d = 2) { return Number(v).toFixed(d); }
+
+    function renderAccount(a) {
+      // Info bar
+      const modeMap = {0:'模拟账户',1:'竞争账户',2:'真实账户'};
+      const marginMap = {0:'零售',1:'净额',2:'全仓'};
+      $('accountInfoBar').innerHTML = `
+        <div class="info-item"><span class="info-label">账户</span><span class="info-value">${a.login}</span></div>
+        <div class="info-item"><span class="info-label">姓名</span><span class="info-value">${a.name}</span></div>
+        <div class="info-item"><span class="info-label">服务器</span><span class="info-value">${a.server}</span></div>
+        <div class="info-item"><span class="info-label">公司</span><span class="info-value">${a.company}</span></div>
+        <div class="info-item"><span class="info-label">杠杆</span><span class="info-value">1:${a.leverage}</span></div>
+        <div class="info-item"><span class="info-label">类型</span><span class="info-value">${modeMap[a.trade_mode]||'未知'}</span></div>
+        <div class="info-item"><span class="info-label">保证金模式</span><span class="info-value">${marginMap[a.margin_mode]||'未知'}</span></div>
+        <div class="info-item"><span class="info-label">货币</span><span class="info-value">${a.currency}</span></div>
+      `;
+
+      // Cards
+      const profitClass = a.profit >= 0 ? 'profit-pos' : 'profit-neg';
+      $('cardsGrid').innerHTML = `
+        <div class="card"><div class="card-label">余额 Balance</div><div class="card-value">${fmtMoney(a.balance, a.currency)}</div></div>
+        <div class="card"><div class="card-label">净值 Equity</div><div class="card-value">${fmtMoney(a.equity, a.currency)}</div></div>
+        <div class="card"><div class="card-label">浮动盈亏 P/L</div><div class="card-value ${profitClass}">${a.profit >= 0 ? '+' : ''}${fmtMoney(a.profit, a.currency)}</div></div>
+        <div class="card"><div class="card-label">已用保证金</div><div class="card-value">${fmtMoney(a.margin, a.currency)}</div></div>
+        <div class="card"><div class="card-label">可用保证金</div><div class="card-value">${fmtMoney(a.margin_free, a.currency)}</div></div>
+        <div class="card"><div class="card-label">保证金水平</div><div class="card-value">${fmtNum(a.margin_level, 1)}%</div><div class="card-sub">强平线: ${a.margin_so_so}%</div></div>
+      `;
+    }
+
+    async function mt5LoadPositions() {
+      try {
+        const r = await fetch('/api/mt5/positions');
+        const d = await r.json();
+        if (!d.ok) return;
+        renderPositionsData(d.positions, d.count);
+      } catch(e) {}
+    }
+
+    function renderPositionsData(positions, count) {
+      $('posCount').textContent = count;
+      if (count === 0) {
+        $('positionsBody').innerHTML = '<div class="empty-state">暂无持仓</div>';
+        return;
+      }
+      let html = `<table class="mt5-table"><tr><th>品种</th><th>方向</th><th>手数</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>盈亏</th></tr>`;
+      for (const p of positions) {
+        const dir = p.type === 0 ? '<span class="type-buy">BUY</span>' : '<span class="type-sell">SELL</span>';
+        const plClass = p.profit >= 0 ? 'profit-pos' : 'profit-neg';
+        html += `<tr><td>${p.symbol}</td><td>${dir}</td><td>${fmtNum(p.volume, 2)}</td><td>${fmtNum(p.price_open, 5)}</td><td>${fmtNum(p.price_current, 5)}</td><td>${p.sl ? fmtNum(p.sl, 5) : '-'}</td><td>${p.tp ? fmtNum(p.tp, 5) : '-'}</td><td class="${plClass}">${p.profit >= 0 ? '+' : ''}${fmtMoney(p.profit)}</td></tr>`;
+      }
+      html += '</table>';
+      $('positionsBody').innerHTML = html;
+    }
+
+    async function mt5LoadOrders() {
+      try {
+        const r = await fetch('/api/mt5/orders');
+        const d = await r.json();
+        if (!d.ok) return;
+        renderOrdersData(d.orders, d.count);
+      } catch(e) {}
+    }
+
+    function renderOrdersData(orders, count) {
+      $('ordCount').textContent = count;
+      if (count === 0) {
+        $('ordersBody').innerHTML = '<div class="empty-state">暂无挂单</div>';
+        return;
+      }
+      const typeMap = {0:'BUY',1:'SELL',2:'BUY LIMIT',3:'SELL LIMIT',4:'BUY STOP',5:'SELL STOP',6:'BUY STOP LIMIT',7:'SELL STOP LIMIT'};
+      let html = `<table class="mt5-table"><tr><th>品种</th><th>类型</th><th>手数</th><th>价格</th><th>止损</th><th>止盈</th><th>备注</th></tr>`;
+      for (const o of orders) {
+        const t = typeMap[o.type] || o.type;
+        html += `<tr><td>${o.symbol}</td><td>${t}</td><td>${fmtNum(o.volume_current, 2)}</td><td>${fmtNum(o.price_open, 5)}</td><td>${o.sl ? fmtNum(o.sl, 5) : '-'}</td><td>${o.tp ? fmtNum(o.tp, 5) : '-'}</td><td>${o.comment||'-'}</td></tr>`;
+      }
+      html += '</table>';
+      $('ordersBody').innerHTML = html;
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Init
+    // ══════════════════════════════════════════════════════
+    loadSessions();
+    $('inputBox').focus();
+  </script>
+</body>
+</html>
