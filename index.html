@@ -391,6 +391,9 @@
         <span class="nav-icon">📈</span> MT5 交易
         <span class="badge offline" id="mt5Badge"></span>
       </button>
+      <button class="nav-btn" id="navTrading" onclick="switchPanel('trading')">
+        <span class="nav-icon">🤖</span> AI 交易
+      </button>
       <div class="spacer"></div>
       <div style="padding:8px 14px;font-size:11px;color:var(--text-muted);line-height:1.5;">
         v0.11 · MiMo
@@ -489,6 +492,85 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ AI TRADING PANEL ═══ -->
+    <div class="panel" id="panelTrading">
+      <div class="panel-header">
+        <h2>🤖 AI 自动交易</h2>
+        <div class="header-right">
+          <span class="status-badge disconnected" id="schedulerStatus">
+            <span class="dot"></span> 未启动
+          </span>
+          <button class="btn btn-outline btn-sm" id="schedulerStartBtn" onclick="startScheduler()">▶ 启动调度</button>
+          <button class="btn btn-outline btn-sm" id="schedulerStopBtn" onclick="stopScheduler()" style="display:none">⏹ 停止</button>
+          <button class="btn btn-primary btn-sm" onclick="runAnalysisCycle()">🔍 手动分析</button>
+        </div>
+      </div>
+      <div class="mt5-content" style="padding:20px;overflow-y:auto;">
+
+        <!-- Symbol selector -->
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
+          <span style="font-size:13px;color:var(--text-secondary)">分析品种:</span>
+          <input id="tradeSymbol" value="XAUUSD" style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--text-primary);font-size:13px;width:120px;">
+          <button class="btn btn-outline btn-sm" onclick="analyzeSymbol()">📊 分析</button>
+          <button class="btn btn-outline btn-sm" onclick="generateSignal()">⚡ 生成信号</button>
+        </div>
+
+        <!-- Analysis result -->
+        <div id="analysisResult" style="display:none;" class="section" style="margin-bottom:16px;"></div>
+
+        <!-- Signals list -->
+        <div class="section" style="margin-bottom:16px;">
+          <div class="section-header">
+            <h3>📡 交易信号</h3>
+            <span class="count" id="signalCount">0</span>
+          </div>
+          <div id="signalsBody"><div class="empty-state">暂无信号</div></div>
+        </div>
+
+        <!-- Trade history -->
+        <div class="section" style="margin-bottom:16px;">
+          <div class="section-header">
+            <h3>📜 交易记录</h3>
+            <button class="btn btn-outline btn-sm" onclick="loadTradeHistory()">刷新</button>
+          </div>
+          <div id="historyBody"><div class="empty-state">暂无记录</div></div>
+        </div>
+
+        <!-- Review & Evolution -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div class="section">
+            <div class="section-header">
+              <h3>📊 每日复盘</h3>
+              <button class="btn btn-outline btn-sm" onclick="runDailyReview()">生成复盘</button>
+            </div>
+            <div id="reviewBody" style="padding:16px;font-size:13px;color:var(--text-secondary);">
+              点击"生成复盘"查看今日分析报告
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-header">
+              <h3>🧬 策略进化</h3>
+              <button class="btn btn-outline btn-sm" onclick="runEvolution()">执行进化</button>
+            </div>
+            <div id="evolutionBody" style="padding:16px;font-size:13px;color:var(--text-secondary);">
+              点击"执行进化"让 AI 优化策略参数
+            </div>
+          </div>
+        </div>
+
+        <!-- Strategy Parameters -->
+        <div class="section" style="margin-top:16px;">
+          <div class="section-header">
+            <h3>⚙️ 策略参数</h3>
+            <button class="btn btn-outline btn-sm" onclick="loadParams()">刷新</button>
+          </div>
+          <div id="paramsBody" style="padding:8px;"><div class="empty-state">加载中...</div></div>
+        </div>
+
+      </div>
+    </div>
+
   </div>
 
   <div class="toast" id="toast"></div>
@@ -812,9 +894,261 @@
     }
 
     // ══════════════════════════════════════════════════════
+    // AI Trading Panel
+    // ══════════════════════════════════════════════════════
+
+    let schedulerRunning = false;
+
+    async function analyzeSymbol() {
+      const symbol = $('tradeSymbol').value.trim().toUpperCase();
+      if (!symbol) return;
+      showToast('分析 ' + symbol + ' 中...');
+      try {
+        const r = await fetch('/api/trading/analyze/' + symbol);
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error || '分析失败', true); return; }
+
+        const dirColor = d.direction === 'BUY' ? 'var(--success)' : d.direction === 'SELL' ? 'var(--error)' : 'var(--text-muted)';
+        let html = `<div style="padding:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="font-size:16px;font-weight:700;">${symbol}</div>
+            <div style="font-size:20px;font-weight:700;color:${dirColor}">${d.direction}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">
+            <div><span style="font-size:11px;color:var(--text-muted)">价格</span><br><strong>${fmtNum(d.entry_price, 5)}</strong></div>
+            <div><span style="font-size:11px;color:var(--text-muted)">信心</span><br><strong>${d.confidence}%</strong></div>
+            <div><span style="font-size:11px;color:var(--text-muted)">止损</span><br><strong style="color:var(--error)">${d.stop_loss ? fmtNum(d.stop_loss, 5) : '-'}</strong></div>
+            <div><span style="font-size:11px;color:var(--text-muted)">止盈</span><br><strong style="color:var(--success)">${d.take_profit ? fmtNum(d.take_profit, 5) : '-'}</strong></div>
+          </div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">趋势: ${d.trend} | ATR: ${fmtNum(d.atr, 5)}</div>
+          <div style="font-size:12px;">`;
+
+        if (d.reasons && d.reasons.length) {
+          html += '<div style="margin-bottom:4px;font-weight:600;">分析依据:</div>';
+          for (const r of d.reasons) html += `<div style="color:var(--text-secondary);padding:2px 0;">• ${r}</div>`;
+        }
+
+        if (d.indicators) {
+          const ind = d.indicators;
+          html += `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">`;
+          html += `<span style="background:var(--bg-tertiary);padding:3px 8px;border-radius:6px;font-size:11px;">RSI: ${ind.rsi}</span>`;
+          html += `<span style="background:var(--bg-tertiary);padding:3px 8px;border-radius:6px;font-size:11px;">MACD: ${ind.macd_cross}</span>`;
+          html += `<span style="background:var(--bg-tertiary);padding:3px 8px;border-radius:6px;font-size:11px;">Stoch K: ${ind.stoch_k}</span>`;
+          html += `<span style="background:var(--bg-tertiary);padding:3px 8px;border-radius:6px;font-size:11px;">BB: ${ind.bb_position}</span>`;
+          html += '</div>';
+        }
+
+        html += '</div></div>';
+
+        const el = $('analysisResult');
+        el.style.display = 'block';
+        el.innerHTML = html;
+        showToast('分析完成');
+      } catch(e) { showToast('分析失败: ' + e.message, true); }
+    }
+
+    async function generateSignal() {
+      const symbol = $('tradeSymbol').value.trim().toUpperCase();
+      if (!symbol) return;
+      showToast('生成信号...');
+      try {
+        const r = await fetch('/api/trading/signal', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({symbol})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error || '生成失败', true); return; }
+        if (!d.signal_id) { showToast(d.reason || '无信号', false); return; }
+
+        const riskOk = d.risk_check && d.risk_check.allowed;
+        showToast(`${d.direction} 信号已生成 信心${d.confidence}% ${riskOk ? '✓风控通过' : '⚠' + (d.risk_check?.reason || '')}`);
+        loadSignals();
+      } catch(e) { showToast('生成失败: ' + e.message, true); }
+    }
+
+    async function loadSignals() {
+      try {
+        const r = await fetch('/api/trading/signals');
+        const d = await r.json();
+        if (!d.ok) return;
+        $('signalCount').textContent = d.count;
+        if (d.count === 0) { $('signalsBody').innerHTML = '<div class="empty-state">暂无信号</div>'; return; }
+
+        let html = `<table class="mt5-table"><tr><th>ID</th><th>品种</th><th>方向</th><th>信心</th><th>入场</th><th>止损</th><th>止盈</th><th>手数</th><th>状态</th><th>操作</th></tr>`;
+        for (const s of d.signals) {
+          const dirClass = s.direction === 'BUY' ? 'type-buy' : 'type-sell';
+          const statusColor = s.status === 'pending' ? 'var(--warn)' : s.status === 'approved' ? 'var(--accent)' : s.status === 'executed' ? 'var(--success)' : 'var(--text-muted)';
+          let actions = '';
+          if (s.status === 'pending') {
+            actions = `<button class="btn btn-sm btn-outline" style="font-size:11px;padding:3px 8px;" onclick="approveSignal(${s.id})">✓</button> <button class="btn btn-sm btn-outline" style="font-size:11px;padding:3px 8px;color:var(--error);" onclick="rejectSignal(${s.id})">✕</button>`;
+          } else if (s.status === 'approved') {
+            actions = `<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 8px;" onclick="executeSignal(${s.id})">执行</button>`;
+          }
+          html += `<tr>
+            <td>${s.id}</td><td>${s.symbol}</td><td><span class="${dirClass}">${s.direction}</span></td>
+            <td>${s.confidence}%</td><td>${fmtNum(s.entry_price, 5)}</td>
+            <td>${s.stop_loss ? fmtNum(s.stop_loss, 5) : '-'}</td><td>${s.take_profit ? fmtNum(s.take_profit, 5) : '-'}</td>
+            <td>${s.lot_size}</td><td style="color:${statusColor}">${s.status}</td><td>${actions}</td>
+          </tr>`;
+        }
+        html += '</table>';
+        $('signalsBody').innerHTML = html;
+      } catch(e) {}
+    }
+
+    async function approveSignal(id) {
+      try { await fetch('/api/trading/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({signal_id:id})}); showToast('已批准'); loadSignals(); } catch(e) { showToast('操作失败', true); }
+    }
+    async function rejectSignal(id) {
+      try { await fetch('/api/trading/reject', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({signal_id:id})}); showToast('已拒绝'); loadSignals(); } catch(e) { showToast('操作失败', true); }
+    }
+    async function executeSignal(id) {
+      try {
+        const r = await fetch('/api/trading/execute', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({signal_id:id})});
+        const d = await r.json();
+        if (d.ok) showToast('已执行 ticket:' + d.ticket); else showToast(d.error, true);
+        loadSignals();
+      } catch(e) { showToast('执行失败', true); }
+    }
+
+    async function loadTradeHistory() {
+      try {
+        const r = await fetch('/api/trading/history?limit=20');
+        const d = await r.json();
+        if (!d.ok) return;
+        if (d.count === 0) { $('historyBody').innerHTML = '<div class="empty-state">暂无交易记录</div>'; return; }
+
+        let html = `<table class="mt5-table"><tr><th>品种</th><th>方向</th><th>手数</th><th>入场</th><th>出场</th><th>盈亏</th><th>持仓时间</th><th>出场原因</th></tr>`;
+        for (const t of d.trades) {
+          const dirClass = t.direction === 'BUY' ? 'type-buy' : 'type-sell';
+          const plClass = (t.profit||0) >= 0 ? 'profit-pos' : 'profit-neg';
+          const holdMin = t.hold_duration ? Math.round(t.hold_duration / 60) : '-';
+          html += `<tr>
+            <td>${t.symbol}</td><td><span class="${dirClass}">${t.direction}</span></td><td>${fmtNum(t.lot_size, 2)}</td>
+            <td>${fmtNum(t.entry_price, 5)}</td><td>${t.exit_price ? fmtNum(t.exit_price, 5) : '-'}</td>
+            <td class="${plClass}">${(t.profit||0) >= 0 ? '+' : ''}${fmtMoney(t.profit||0)}</td>
+            <td>${holdMin}分</td><td>${t.exit_reason||'-'}</td>
+          </tr>`;
+        }
+        html += '</table>';
+        $('historyBody').innerHTML = html;
+      } catch(e) {}
+    }
+
+    async function startScheduler() {
+      try {
+        const r = await fetch('/api/scheduler/start', {method:'POST'});
+        const d = await r.json();
+        if (d.ok) { schedulerRunning = true; updateSchedulerUI(true); showToast('调度器已启动'); }
+        else showToast(d.error || '启动失败', true);
+      } catch(e) { showToast('启动失败', true); }
+    }
+
+    async function stopScheduler() {
+      try {
+        const r = await fetch('/api/scheduler/stop', {method:'POST'});
+        const d = await r.json();
+        if (d.ok) { schedulerRunning = false; updateSchedulerUI(false); showToast('调度器已停止'); }
+      } catch(e) { showToast('停止失败', true); }
+    }
+
+    function updateSchedulerUI(running) {
+      const el = $('schedulerStatus');
+      if (running) {
+        el.className = 'status-badge connected';
+        el.innerHTML = '<span class="dot"></span> 运行中';
+        $('schedulerStartBtn').style.display = 'none';
+        $('schedulerStopBtn').style.display = '';
+      } else {
+        el.className = 'status-badge disconnected';
+        el.innerHTML = '<span class="dot"></span> 未启动';
+        $('schedulerStartBtn').style.display = '';
+        $('schedulerStopBtn').style.display = 'none';
+      }
+    }
+
+    async function runAnalysisCycle() {
+      showToast('执行分析...');
+      try {
+        const r = await fetch('/api/scheduler/cycle', {method:'POST'});
+        const d = await r.json();
+        if (d.ok) {
+          showToast('分析完成');
+          loadSignals();
+          // Auto-analyze to show results
+          analyzeSymbol();
+        } else showToast(d.error || '分析失败', true);
+      } catch(e) { showToast('分析失败', true); }
+    }
+
+    async function runDailyReview() {
+      showToast('生成复盘报告...');
+      try {
+        const r = await fetch('/api/review/daily');
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error, true); return; }
+
+        let html = `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;color:var(--text-primary);">${escHtml(d.summary)}</pre>`;
+        if (d.action_items && d.action_items.length) {
+          html += '<div style="margin-top:12px;"><strong style="color:var(--warn);">改进建议:</strong>';
+          for (const a of d.action_items) html += `<div style="color:var(--text-secondary);padding:2px 0;font-size:12px;">• ${a}</div>`;
+          html += '</div>';
+        }
+        $('reviewBody').innerHTML = html;
+        showToast('复盘生成完成');
+      } catch(e) { showToast('复盘失败', true); }
+    }
+
+    async function runEvolution() {
+      showToast('执行策略进化...');
+      try {
+        const r = await fetch('/api/evolution/run', {method:'POST'});
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error, true); return; }
+
+        let html = `<div style="font-size:12px;">
+          <div><strong>第 ${d.generation} 代</strong> — ${d.reason}</div>
+          <div style="margin-top:8px;">
+            胜率: ${(d.performance?.win_rate||0).toFixed(1)}% |
+            盈亏比: ${(d.performance?.profit_factor||0).toFixed(2)} |
+            夏普: ${(d.performance?.sharpe_ratio||0).toFixed(2)}
+          </div>`;
+        if (d.changed_params && d.changed_params.length) {
+          html += '<div style="margin-top:8px;"><strong>调整参数:</strong></div>';
+          for (const p of d.changed_params) {
+            html += `<div style="color:var(--text-secondary);">${p.name}: ${p.old} → ${p.new} (${p.delta > 0 ? '+' : ''}${p.delta})</div>`;
+          }
+        } else {
+          html += '<div style="color:var(--text-muted);margin-top:4px;">本次无参数调整</div>';
+        }
+        html += '</div>';
+        $('evolutionBody').innerHTML = html;
+        showToast('进化完成');
+        loadParams();
+      } catch(e) { showToast('进化失败', true); }
+    }
+
+    async function loadParams() {
+      try {
+        const r = await fetch('/api/evolution/params');
+        const d = await r.json();
+        if (!d.ok) return;
+
+        let html = `<table class="mt5-table"><tr><th>参数</th><th>值</th><th>说明</th><th>范围</th></tr>`;
+        for (const p of d.params) {
+          const range = (p.min_val !== null && p.max_val !== null) ? `${p.min_val} ~ ${p.max_val}` : '-';
+          html += `<tr><td><strong>${p.name}</strong></td><td>${p.value}</td><td style="color:var(--text-secondary);font-size:12px;">${p.description||'-'}</td><td>${range}</td></tr>`;
+        }
+        html += '</table>';
+        $('paramsBody').innerHTML = html;
+      } catch(e) {}
+    }
+
+    // ══════════════════════════════════════════════════════
     // Init
     // ══════════════════════════════════════════════════════
     loadSessions();
+    loadParams();
     $('inputBox').focus();
   </script>
 </body>
