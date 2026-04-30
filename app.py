@@ -116,8 +116,129 @@ async def handle_index(request):
 
 
 # ── Chat API ───────────────────────────────────────────────────────
+async def handle_chat_stream(request):
+    """POST /api/chat/stream — SSE streaming chat with tool progress events."""
+    import queue as _q
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    user_msg = (data.get("message") or "").strip()
+    session_id = data.get("session_id")
+
+    if not user_msg:
+        return web.json_response({"error": "Empty message"}, status=400)
+
+    sid, session = get_or_create_session(session_id)
+
+    agent = get_agent()
+    history = [{"role": m["role"], "content": m["content"]} for m in session["history"]]
+
+    event_q: _q.Queue = _q.Queue()
+
+    def on_stream_delta(delta):
+        if delta:
+            event_q.put(("delta", {"text": delta}))
+
+    def on_tool_start(tool_call_id, function_name, function_args):
+        logger.info("SSE tool_start: %s", function_name)
+        event_q.put(("tool_start", {
+            "id": tool_call_id or "",
+            "name": function_name,
+            "args_preview": str(function_args)[:200] if function_args else "",
+        }))
+
+    def on_tool_complete(tool_call_id, function_name, function_args, result):
+        logger.info("SSE tool_complete: %s", function_name)
+        result_preview = ""
+        if result:
+            result_preview = str(result)[:300]
+        event_q.put(("tool_complete", {
+            "id": tool_call_id or "",
+            "name": function_name,
+            "result_preview": result_preview,
+        }))
+
+    def on_step(message):
+        if message:
+            event_q.put(("step", {"text": message}))
+
+    def run_agent():
+        try:
+            # Set callbacks on the agent before running
+            agent.stream_delta_callback = on_stream_delta
+            agent.tool_start_callback = on_tool_start
+            agent.tool_complete_callback = on_tool_complete
+            agent.step_callback = on_step
+
+            result = agent.run_conversation(
+                user_message=user_msg,
+                conversation_history=history if history else None,
+            )
+            response_text = ""
+            if isinstance(result, dict):
+                response_text = result.get("final_response", "")
+            elif result:
+                response_text = str(result)
+            if not response_text:
+                response_text = "(无响应)"
+
+            # Update session history
+            session["history"].append({"role": "user", "content": user_msg})
+            session["history"].append({"role": "assistant", "content": response_text})
+            if len(session["history"]) > MAX_HISTORY * 2:
+                session["history"] = session["history"][-(MAX_HISTORY * 2):]
+
+            event_q.put(("done", {"session_id": sid, "response": response_text}))
+        except Exception as e:
+            logger.exception("Stream chat error")
+            event_q.put(("error", {"message": str(e)}))
+        finally:
+            # Reset callbacks to avoid affecting non-streaming calls
+            agent.stream_delta_callback = None
+            agent.tool_start_callback = None
+            agent.tool_complete_callback = None
+            agent.step_callback = None
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, run_agent)
+
+    response = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    await response.prepare(request)
+
+    while True:
+        try:
+            event_type, payload = await asyncio.wait_for(
+                loop.run_in_executor(None, event_q.get),
+                timeout=300,
+            )
+        except asyncio.TimeoutError:
+            await response.write(b"event: error\ndata: {\"message\":\"timeout\"}\n\n")
+            break
+
+        data_str = json.dumps(payload, ensure_ascii=False)
+        await response.write(f"event: {event_type}\ndata: {data_str}\n\n".encode())
+
+        if event_type in ("done", "error"):
+            break
+
+    await response.write_eof()
+    return response
+
 
 async def handle_chat(request):
+    """POST /api/chat — non-streaming chat (backward compatible)."""
     try:
         data = await request.json()
     except Exception:
@@ -467,6 +588,7 @@ def create_app():
     app.router.add_get("/index.html", handle_index)
 
     # Chat
+    app.router.add_post("/api/chat/stream", handle_chat_stream)
     app.router.add_post("/api/chat", handle_chat)
     app.router.add_get("/api/sessions", handle_sessions)
     app.router.add_post("/api/sessions/new", handle_new_session)

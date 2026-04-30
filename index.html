@@ -337,6 +337,69 @@
     .message .content .text pre { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: "JetBrains Mono","Fira Code",monospace; font-size: 12px; line-height: 1.5; }
     .message .content .text pre code { background: none; padding: 0; }
 
+    /* ─── Process Steps (tool calls display) ────────────── */
+    .process-steps {
+      border-left: 2px solid var(--border);
+      padding-left: 12px;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+    .process-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 4px 0;
+      color: var(--text-secondary);
+      animation: fadeIn 0.2s ease;
+    }
+    .process-step .step-icon {
+      flex-shrink: 0;
+      width: 20px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .process-step .step-icon.spin {
+      animation: spin 1s linear infinite;
+    }
+    .process-step .step-text {
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: "JetBrains Mono","Fira Code",monospace;
+      font-size: 11px;
+    }
+    .process-step .step-text.done {
+      color: var(--success);
+    }
+    .process-step .step-args {
+      color: var(--text-muted);
+      font-size: 11px;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .process-step .step-result {
+      color: var(--text-muted);
+      font-size: 11px;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .process-step.tool-running {
+      opacity: 0.8;
+    }
+    .process-step.tool-done {
+      opacity: 1;
+    }
+    .process-step.step-info {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .streaming-text {
+      color: var(--text-primary);
+    }
+
     .typing-indicator { display: none; max-width: 760px; width: 100%; margin: 0 auto; gap: 10px; }
     .typing-indicator.visible { display: flex; }
     .typing-dots { display: flex; gap: 4px; padding: 10px 0; }
@@ -689,6 +752,52 @@
 
     function clearMsgs() { $('messages').querySelectorAll('.message').forEach(el => el.remove()); }
 
+    // Tool emoji map for display
+    const toolEmojis = {
+      'web_search': '🔍', 'web_extract': '📄', 'terminal': '💻', 'read_file': '📖',
+      'write_file': '📝', 'search_files': '🔎', 'patch': '🔧', 'execute_code': '⚡',
+      'browser_navigate': '🌐', 'browser_click': '👆', 'browser_snapshot': '📸',
+      'skill_view': '📚', 'skill_manage': '📚', 'memory': '🧠', 'session_search': '🔍',
+      'delegate_task': '🤖', 'cronjob': '⏰', 'clarify': '❓', 'todo': '📋',
+      'vision_analyze': '👁️', 'text_to_speech': '🔊', 'process': '⚙️',
+      'browser_vision': '📸', 'browser_console': '💻',
+    };
+
+    function appendProcessStep(type, data) {
+      // Find the active streaming message by its data attribute
+      const processEl = document.querySelector('[data-streaming="true"] .process-steps');
+      if (!processEl) return;
+
+      const step = document.createElement('div');
+      step.className = 'process-step';
+
+      if (type === 'tool_start') {
+        const emoji = toolEmojis[data.name] || '🔨';
+        step.innerHTML = `<span class="step-icon spin">${emoji}</span> <span class="step-text">${escHtml(data.name)}</span> <span class="step-args">${escHtml(data.args_preview || '')}</span>`;
+        step.id = 'tool-' + (data.id || data.name);
+        step.classList.add('tool-running');
+      } else if (type === 'tool_complete') {
+        const emoji = toolEmojis[data.name] || '🔨';
+        step.innerHTML = `<span class="step-icon">${emoji}</span> <span class="step-text done">${escHtml(data.name)}</span> <span class="step-result">${escHtml((data.result_preview || '').substring(0, 150))}</span>`;
+        step.classList.add('tool-done');
+      } else if (type === 'delta') {
+        // Append to the text content area
+        let textEl = document.querySelector('[data-streaming="true"] .streaming-text');
+        if (textEl) {
+          textEl.style.display = '';
+          textEl.textContent += data.text;
+        }
+        return; // Don't add to process steps
+      } else if (type === 'step') {
+        step.innerHTML = `<span class="step-icon">💭</span> <span class="step-text">${escHtml(data.text)}</span>`;
+        step.classList.add('step-info');
+      }
+
+      processEl.appendChild(step);
+      processEl.scrollTop = processEl.scrollHeight;
+      $('messages').scrollTop = $('messages').scrollHeight;
+    }
+
     async function sendMessage() {
       const text = $('inputBox').value.trim();
       if (!text || isSending) return;
@@ -700,23 +809,117 @@
 
       $('inputBox').value = ''; $('inputBox').style.height = 'auto';
       isSending = true; $('sendBtn').disabled = true;
-      $('typing').classList.add('visible');
+      $('messages').scrollTop = $('messages').scrollHeight;
+
+      // Create assistant message container with process steps
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message assistant';
+      msgDiv.setAttribute('data-streaming', 'true');
+      msgDiv.innerHTML = `
+        <div class="avatar">⚡</div>
+        <div class="content">
+          <div class="role">Hermes</div>
+          <div class="process-steps" style="max-height:300px;overflow-y:auto;margin-bottom:8px;"></div>
+          <div class="streaming-text" style="display:none;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word;"></div>
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+        </div>
+      `;
+      $('messages').insertBefore(msgDiv, $('typing'));
       $('messages').scrollTop = $('messages').scrollHeight;
 
       try {
-        const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({message:text, session_id:currentSessionId})});
-        const d = await r.json();
-        if (d.error) { appendMsg('assistant', '⚠️ 错误: ' + d.error); showToast(d.error, true); }
-        else {
-          appendMsg('assistant', d.response);
-          chatSessions[currentSessionId].messages.push({role:'assistant', content:d.response});
-          chatSessions[currentSessionId].turns = (chatSessions[currentSessionId].turns||0) + 1;
-          if (d.session_id && d.session_id !== currentSessionId) currentSessionId = d.session_id;
-          renderSessList();
+        const r = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message: text, session_id: currentSessionId})
+        });
+
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalResponse = '';
+
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, {stream: true});
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line in buffer
+
+          let eventType = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              eventType = line.substring(7).trim();
+            } else if (line.startsWith('data: ')) {
+              const jsonStr = line.substring(6);
+              try {
+                const payload = JSON.parse(jsonStr);
+
+                if (eventType === 'delta') {
+                  appendProcessStep('delta', payload);
+                } else if (eventType === 'tool_start') {
+                  appendProcessStep('tool_start', payload);
+                } else if (eventType === 'tool_complete') {
+                  appendProcessStep('tool_complete', payload);
+                } else if (eventType === 'step') {
+                  appendProcessStep('step', payload);
+                } else if (eventType === 'done') {
+                  finalResponse = payload.response || '';
+                } else if (eventType === 'error') {
+                  finalResponse = '⚠️ 错误: ' + (payload.message || '未知错误');
+                }
+              } catch(e) {}
+            }
+          }
         }
-      } catch(e) { appendMsg('assistant', '⚠️ 网络错误: ' + e.message); showToast('发送失败', true); }
-      finally { isSending = false; $('sendBtn').disabled = false; $('typing').classList.remove('visible'); $('messages').scrollTop = $('messages').scrollHeight; }
+
+        // Mark message as no longer streaming
+        msgDiv.removeAttribute('data-streaming');
+
+        // Remove typing dots, show final response
+        const dots = msgDiv.querySelector('.typing-dots');
+        if (dots) dots.remove();
+
+        const textEl = msgDiv.querySelector('.streaming-text');
+        const procSteps = msgDiv.querySelector('.process-steps');
+
+        // Collapse process steps into a summary if any exist
+        if (procSteps && procSteps.children.length > 0) {
+          procSteps.style.maxHeight = '120px';
+          procSteps.style.overflow = 'auto';
+          procSteps.style.borderLeft = '2px solid var(--accent)';
+        }
+
+        if (finalResponse) {
+          // Render final response with markdown
+          let html = escHtml(finalResponse);
+          html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+          html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+          html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+          if (textEl) textEl.style.display = 'none';
+          const textContainer = msgDiv.querySelector('.content');
+          const finalDiv = document.createElement('div');
+          finalDiv.className = 'text';
+          finalDiv.innerHTML = html;
+          textContainer.appendChild(finalDiv);
+        }
+
+        chatSessions[currentSessionId].messages.push({role:'assistant', content: finalResponse});
+        chatSessions[currentSessionId].turns = (chatSessions[currentSessionId].turns || 0) + 1;
+        renderSessList();
+
+      } catch(e) {
+        msgDiv.removeAttribute('data-streaming');
+        const dots = msgDiv.querySelector('.typing-dots');
+        if (dots) dots.remove();
+        const textEl = msgDiv.querySelector('.streaming-text');
+        if (textEl) { textEl.style.display = ''; textEl.textContent = '⚠️ 网络错误: ' + e.message; }
+      }
+
+      isSending = false; $('sendBtn').disabled = false;
+      $('messages').scrollTop = $('messages').scrollHeight;
     }
 
     function sendQuick(t) { $('inputBox').value = t; sendMessage(); }
