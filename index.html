@@ -1581,6 +1581,15 @@
         const providerOptions = Object.entries(providers || {}).map(([k, v]) =>
           `<option value="${k}" ${a.provider===k?'selected':''}>${v.name}</option>`
         ).join('');
+        // Build model options for current provider
+        const currentProvider = providers[a.provider] || {};
+        const currentModels = currentProvider.models || [];
+        const selectedModel = a.model || currentProvider.default_model || '';
+        const modelOptions = currentModels.map(m =>
+          `<option value="${m.id}" ${selectedModel===m.id?'selected':''}>${m.name} [${m.speed}]</option>`
+        ).join('');
+        // Store providers data for JS access
+        const allProvidersJson = JSON.stringify(providers || {}).replace(/"/g, '&quot;');
 
         html += `<div class="section" style="overflow:visible;">
           <div class="section-header" style="gap:10px;">
@@ -1598,11 +1607,21 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
               <div>
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">模型提供商</div>
-                <select id="ap_${a.agent_id}" onchange="updateAgentField('${a.agent_id}','provider',this.value)"
+                <select id="ap_${a.agent_id}" onchange="onProviderChange('${a.agent_id}', this.value, '${allProvidersJson}')"
                   style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
                   ${providerOptions}
                 </select>
               </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">具体模型</div>
+                <select id="am_${a.agent_id}" onchange="updateAgentField('${a.agent_id}','model',this.value)"
+                  style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
+                  ${modelOptions}
+                </select>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
               <div>
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">调用频率</div>
                 <select id="af_${a.agent_id}" onchange="updateAgentField('${a.agent_id}','frequency',this.value)"
@@ -1612,14 +1631,15 @@
                   <option value="low" ${a.frequency==='low'?'selected':''}>🟢 低频 — 每日/定时</option>
                 </select>
               </div>
-            </div>
-
-            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
-              <div style="font-size:11px;color:var(--text-muted);">权重</div>
-              <input type="range" id="aw_${a.agent_id}" min="0.1" max="3" step="0.1" value="${a.weight||1}"
-                onchange="updateAgentField('${a.agent_id}','weight',parseFloat(this.value))"
-                style="flex:1;accent-color:var(--accent);">
-              <span style="font-size:12px;color:var(--text-primary);min-width:30px;" id="awv_${a.agent_id}">${(a.weight||1).toFixed(1)}</span>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">决策权重</div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 0;">
+                  <input type="range" id="aw_${a.agent_id}" min="0.1" max="3" step="0.1" value="${a.weight||1}"
+                    onchange="updateAgentField('${a.agent_id}','weight',parseFloat(this.value))"
+                    style="flex:1;accent-color:var(--accent);">
+                  <span style="font-size:12px;color:var(--text-primary);min-width:30px;" id="awv_${a.agent_id}">${(a.weight||1).toFixed(1)}</span>
+                </div>
+              </div>
             </div>
 
             <!-- Stats bar -->
@@ -1636,6 +1656,26 @@
         </div>`;
       }
       area.innerHTML = html;
+    }
+
+    function onProviderChange(agentId, providerKey, providersJsonStr) {
+      // Update provider first
+      updateAgentField(agentId, 'provider', providerKey);
+      // Update model dropdown to show models for the new provider
+      try {
+        const providers = JSON.parse(providersJsonStr.replace(/&quot;/g, '"'));
+        const provider = providers[providerKey] || {};
+        const models = provider.models || [];
+        const defaultModel = provider.default_model || '';
+        const modelSelect = $('am_' + agentId);
+        if (modelSelect) {
+          modelSelect.innerHTML = models.map(m =>
+            `<option value="${m.id}" ${m.id===defaultModel?'selected':''}>${m.name} [${m.speed}]</option>`
+          ).join('');
+          // Auto-save the default model
+          updateAgentField(agentId, 'model', defaultModel);
+        }
+      } catch(e) { console.error('onProviderChange', e); }
     }
 
     async function toggleAgent(agentId, enabled) {

@@ -147,18 +147,31 @@ MODEL_PROVIDERS = {
         "base_url": "https://api.xiaomi.com/v1",
         "default_model": "MiMo-v2.5-pro",
         "description": "小米 MiMo 模型",
+        "models": [
+            {"id": "MiMo-v2.5-pro", "name": "MiMo v2.5 Pro", "speed": "中"},
+            {"id": "MiMo-v2.5", "name": "MiMo v2.5", "speed": "快"},
+        ],
     },
     "deepseek": {
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
         "default_model": "deepseek-chat",
-        "description": "DeepSeek V3",
+        "description": "DeepSeek",
+        "models": [
+            {"id": "deepseek-chat", "name": "DeepSeek V3", "speed": "中"},
+            {"id": "deepseek-reasoner", "name": "DeepSeek R1 (推理)", "speed": "慢"},
+        ],
     },
     "minimax": {
         "name": "MiniMax",
         "base_url": "https://api.minimax.chat/v1",
         "default_model": "MiniMax-Text-01",
-        "description": "MiniMax 模型",
+        "description": "MiniMax",
+        "models": [
+            {"id": "MiniMax-Text-01", "name": "MiniMax Text 01 (旗舰)", "speed": "慢"},
+            {"id": "abab6.5s-chat", "name": "abab 6.5s (轻量)", "speed": "快"},
+            {"id": "abab5.5-chat", "name": "abab 5.5", "speed": "快"},
+        ],
     },
 }
 
