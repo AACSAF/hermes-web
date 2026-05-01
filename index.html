@@ -1456,6 +1456,47 @@
       }
     }
 
+    // Poll scheduler status every 3s for countdown display
+    let _schedulerPollTimer = null;
+    function startSchedulerPoll() {
+      if (_schedulerPollTimer) return;
+      _schedulerPollTimer = setInterval(async () => {
+        try {
+          const r = await fetch('/api/scheduler/status');
+          const d = await r.json();
+          if (!d.ok) return;
+          const el = $('schedulerStatus');
+          if (d.running) {
+            schedulerRunning = true;
+            updateSchedulerUI(true);
+            // Update countdown
+            const countdown = d.countdown || 0;
+            const positions = d.open_positions || 0;
+            const mode = d.config?.mode || 'committee';
+            const modeLabel = mode === 'committee' ? '🏛️ 委员会' : '🤖 单Agent';
+            if (d.state === 'holding') {
+              el.className = 'status-badge connecting';
+              el.innerHTML = `<span class="dot"></span> 持仓中(${positions}) · ${modeLabel}`;
+            } else if (countdown > 0) {
+              const min = Math.floor(countdown / 60);
+              const sec = countdown % 60;
+              el.innerHTML = `<span class="dot"></span> ${modeLabel} · ${min}:${String(sec).padStart(2,'0')}`;
+            } else {
+              el.innerHTML = `<span class="dot"></span> ${modeLabel} · 分析中...`;
+            }
+          } else {
+            schedulerRunning = false;
+            updateSchedulerUI(false);
+          }
+        } catch(e) {}
+      }, 3000);
+    }
+    function stopSchedulerPoll() {
+      if (_schedulerPollTimer) { clearInterval(_schedulerPollTimer); _schedulerPollTimer = null; }
+    }
+    // Auto-start poll
+    startSchedulerPoll();
+
     async function runAnalysisCycle() {
       showToast('执行分析...');
       try {

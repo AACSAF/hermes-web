@@ -88,34 +88,72 @@ class TradingScheduler:
                 now = time.time()
                 self._status["state"] = "running"
 
-                # 1. Ensure MT5 daemon
-                if not mt5_data.daemon.is_ready():
-                    if not mt5_data.ensure_daemon():
-                        logger.warning("MT5 daemon not available, sleeping 30s")
-                        time.sleep(30)
-                        continue
+                # 1. Ensure MT5 daemon (non-blocking — continue analysis even if MT5 down)
+                mt5_ready = mt5_data.daemon.is_ready()
+                if not mt5_ready:
+                    mt5_ready = mt5_data.ensure_daemon()
+                    if not mt5_ready:
+                        logger.warning("MT5 daemon not available")
+                        self._status["mt5_ready"] = False
+                    else:
+                        self._status["mt5_ready"] = True
+                else:
+                    self._status["mt5_ready"] = True
 
-                # 2. Fetch candles periodically
-                if now - self._last_candle_fetch >= self._config["candle_interval"]:
+                # 2. Skip analysis if already have open position (max 1)
+                has_position = False
+                if mt5_ready:
+                    try:
+                        positions_result = mt5_data.daemon.call("positions")
+                        pos_list = positions_result.get("positions", []) if positions_result.get("ok") else []
+                        has_position = len(pos_list) > 0
+                        self._status["open_positions"] = len(pos_list)
+                    except Exception:
+                        pass
+
+                if has_position:
+                    self._status["state"] = "holding"
+                    self._status["skip_reason"] = "持仓中，跳过分析"
+                    # Still do trade sync and trailing stops
+                    if now - self._last_trade_sync >= self._config["trade_sync_interval"]:
+                        engine.sync_trades()
+                        self._last_trade_sync = now
+                    if now - self._last_trailing_check >= self._config["trailing_check_interval"]:
+                        self._do_trailing_stops()
+                        self._last_trailing_check = now
+                    # Calculate next analysis time
+                    self._status["next_analysis_at"] = self._last_analysis + self._config["analysis_interval"]
+                    time.sleep(5)
+                    continue
+
+                # 3. Fetch candles periodically
+                if mt5_ready and now - self._last_candle_fetch >= self._config["candle_interval"]:
                     self._do_candle_fetch()
                     self._last_candle_fetch = now
 
-                # 3. Analysis cycle
-                if now - self._last_analysis >= self._config["analysis_interval"]:
+                # 4. Analysis cycle
+                interval = self._config["analysis_interval"]
+                time_since_last = now - self._last_analysis
+                self._status["next_analysis_at"] = self._last_analysis + interval
+                self._status["countdown"] = max(0, int(interval - time_since_last))
+
+                if time_since_last >= interval:
                     self._do_analysis_cycle()
                     self._last_analysis = now
+                    self._status["countdown"] = interval
+                    self._status["next_analysis_at"] = now + interval
 
-                # 4. Trade sync
-                if now - self._last_trade_sync >= self._config["trade_sync_interval"]:
+                # 5. Trade sync
+                if mt5_ready and now - self._last_trade_sync >= self._config["trade_sync_interval"]:
                     engine.sync_trades()
                     self._last_trade_sync = now
 
-                # 5. Trailing stop check
-                if now - self._last_trailing_check >= self._config["trailing_check_interval"]:
+                # 6. Trailing stop check
+                if mt5_ready and now - self._last_trailing_check >= self._config["trailing_check_interval"]:
                     self._do_trailing_stops()
                     self._last_trailing_check = now
 
-                # 6. Daily review
+                # 7. Daily review
                 today = time.strftime("%Y-%m-%d")
                 if today != self._last_review_date and time.localtime().tm_hour >= self._config["review_hour"]:
                     result = review.generate_daily_review()
