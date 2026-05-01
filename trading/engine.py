@@ -309,6 +309,17 @@ def build_ai_prompt(symbol: str, data: dict) -> str:
         for r in data["rules"][:5]:
             rules_str += f"  - [{r['category']}] {r['rule']} (可信度:{r['confidence']:.0f}%)\n"
 
+    # Inject learned knowledge from reviewer agent
+    from . import agents as _agents
+    learned = _agents.get_learned_knowledge()
+    knowledge_str = ""
+    if learned:
+        knowledge_str = f"""
+
+## AI 复盘系统已学到的经验（必须参考）
+{learned}
+"""
+
     prompt = f"""你是一位专业的量化交易分析师。请根据以下市场数据，对 {symbol} 做出交易决策。
 
 ## 当前市场状态
@@ -341,6 +352,7 @@ def build_ai_prompt(symbol: str, data: dict) -> str:
 
 {trades_str}
 {rules_str}
+{knowledge_str}
 
 ## 要求
 请综合分析以上所有信息，给出你的交易决策。不要机械地套用指标阈值，而是像一个有经验的交易员一样，综合考虑：

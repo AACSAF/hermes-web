@@ -618,11 +618,11 @@
           </div>
           <div class="section">
             <div class="section-header">
-              <h3>🧬 策略进化</h3>
-              <button class="btn btn-outline btn-sm" onclick="runEvolution()">执行进化</button>
+              <h3>🧬 AI 自我进化</h3>
+              <button class="btn btn-outline btn-sm" onclick="runReviewEvolution()">🧠 复盘进化</button>
             </div>
             <div id="evolutionBody" style="padding:16px;font-size:13px;color:var(--text-secondary);">
-              点击"执行进化"让 AI 优化交易策略
+              AI 复盘师将分析历史交易，发现规律，自动优化策略和Agent权重
             </div>
           </div>
         </div>
@@ -1428,30 +1428,87 @@
       } catch(e) { showToast('复盘失败', true); }
     }
 
+    async function runReviewEvolution() {
+      showToast('🧠 AI 复盘师分析中...');
+      $('evolutionBody').innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner"></div> 复盘师正在分析历史交易，预计15-30秒...</div>';
+      try {
+        const r = await fetch('/api/trading/review-evolution', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({days: 7})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error || '进化失败', true); $('evolutionBody').innerHTML = '<div style="color:var(--error);padding:16px;">' + escHtml(d.error || '未知错误') + '</div>'; return; }
+
+        const rev = d.review || {};
+        const app = d.applied || {};
+        let html = '<div style="font-size:12px;">';
+
+        // Overall assessment
+        if (rev.overall_assessment) {
+          html += `<div style="margin-bottom:12px;font-size:13px;color:var(--text-primary);">${escHtml(rev.overall_assessment)}</div>`;
+        }
+
+        // Stats
+        html += `<div style="display:flex;gap:12px;margin-bottom:12px;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;">
+          <span>📊 分析 <strong>${d.trades_analyzed}</strong> 笔交易</span>
+          <span>📏 当前 <strong>${d.rules_count}</strong> 条规则</span>
+          <span>⚡ 耗时 <strong>${d.latency_ms}</strong>ms</span>
+        </div>`;
+
+        // Win/Loss patterns
+        if (rev.win_patterns && rev.win_patterns.length) {
+          html += '<div style="margin-bottom:8px;"><strong style="color:var(--success);">✅ 成功模式:</strong></div>';
+          for (const p of rev.win_patterns) html += `<div style="color:var(--text-secondary);padding:2px 0;">• ${escHtml(p)}</div>`;
+        }
+        if (rev.loss_patterns && rev.loss_patterns.length) {
+          html += '<div style="margin-bottom:8px;margin-top:8px;"><strong style="color:var(--error);">❌ 失败模式:</strong></div>';
+          for (const p of rev.loss_patterns) html += `<div style="color:var(--text-secondary);padding:2px 0;">• ${escHtml(p)}</div>`;
+        }
+
+        // Applied changes
+        html += `<div style="margin-top:12px;padding:8px 12px;background:var(--accent-glow);border-radius:8px;">
+          <strong>🔧 已自动应用:</strong>
+          <span style="margin-left:8px;">新增 ${app.rules_added||0} 条规则</span>
+          <span style="margin-left:8px;">调整 ${app.params_adjusted||0} 个参数</span>
+          <span style="margin-left:8px;">更新 ${app.weights_updated||0} 个Agent权重</span>
+        </div>`;
+
+        // New rules
+        if (rev.new_rules && rev.new_rules.length) {
+          html += '<div style="margin-top:12px;"><strong>📝 新增规则:</strong></div>';
+          for (const r of rev.new_rules) {
+            html += `<div style="color:var(--text-secondary);padding:2px 0;">[${r.category}] ${escHtml(r.rule)} (${r.confidence}%)</div>`;
+          }
+        }
+
+        // Param adjustments
+        if (rev.param_adjustments && rev.param_adjustments.length) {
+          html += '<div style="margin-top:8px;"><strong>⚙️ 参数调整:</strong></div>';
+          for (const p of rev.param_adjustments) {
+            html += `<div style="color:var(--text-secondary);padding:2px 0;">${p.param_name}: ${p.current_value} → ${p.suggested_value} (${escHtml(p.reason||'')})</div>`;
+          }
+        }
+
+        // Priority actions
+        if (rev.priority_actions && rev.priority_actions.length) {
+          html += '<div style="margin-top:8px;"><strong style="color:var(--warn);">🎯 重点改进:</strong></div>';
+          for (const a of rev.priority_actions) html += `<div style="color:var(--text-secondary);padding:2px 0;">• ${escHtml(a)}</div>`;
+        }
+
+        html += '</div>';
+        $('evolutionBody').innerHTML = html;
+        showToast('✅ 复盘进化完成');
+      } catch(e) { showToast('进化失败: ' + e.message, true); }
+    }
+
+    // Keep old function for backward compat
     async function runEvolution() {
       showToast('执行策略进化...');
       try {
         const r = await fetch('/api/evolution/run', {method:'POST'});
         const d = await r.json();
         if (!d.ok) { showToast(d.error, true); return; }
-
-        let html = `<div style="font-size:12px;">
-          <div><strong>第 ${d.generation} 代</strong> — ${d.reason}</div>
-          <div style="margin-top:8px;">
-            胜率: ${(d.performance?.win_rate||0).toFixed(1)}% |
-            盈亏比: ${(d.performance?.profit_factor||0).toFixed(2)} |
-            夏普: ${(d.performance?.sharpe_ratio||0).toFixed(2)}
-          </div>`;
-        if (d.changed_params && d.changed_params.length) {
-          html += '<div style="margin-top:8px;"><strong>调整参数:</strong></div>';
-          for (const p of d.changed_params) {
-            html += `<div style="color:var(--text-secondary);">${p.name}: ${p.old} → ${p.new} (${p.delta > 0 ? '+' : ''}${p.delta})</div>`;
-          }
-        } else {
-          html += '<div style="color:var(--text-muted);margin-top:4px;">本次无参数调整</div>';
-        }
-        html += '</div>';
-        $('evolutionBody').innerHTML = html;
+        $('evolutionBody').innerHTML = '<div style="font-size:12px;"><div>第 ' + d.generation + ' 代 — ' + d.reason + '</div></div>';
         showToast('进化完成');
       } catch(e) { showToast('进化失败', true); }
     }

@@ -468,3 +468,251 @@ def get_agent_stats(agent_id: str = None, days: int = 7) -> list:
             (cutoff,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Self-Evolution (Review Agent) ──────────────────────────────────
+
+def run_review_evolution(days: int = 7) -> dict:
+    """Run the reviewer agent to analyze recent trades and evolve strategy.
+
+    Flow:
+    1. Collect recent trades + current rules + agent performance
+    2. Send to reviewer agent for analysis
+    3. Parse reviewer's JSON output
+    4. Apply new rules to DB
+    5. Apply parameter adjustments to DB
+    6. Log evolution generation
+    """
+    conn = db.get_conn()
+    cutoff = time.time() - days * 86400
+
+    # 1. Collect recent trades
+    trades = conn.execute(
+        """SELECT symbol, direction, entry_price, exit_price, profit, stop_loss, take_profit,
+                  lot_size, hold_duration, exit_reason, entry_time, exit_time, context
+           FROM trades WHERE entry_time >= ? ORDER BY entry_time""",
+        (cutoff,)
+    ).fetchall()
+    trades_list = [dict(t) for t in trades]
+
+    # 2. Collect current rules
+    rules = conn.execute(
+        "SELECT id, category, rule, confidence, times_applied, times_correct FROM rules ORDER BY confidence DESC"
+    ).fetchall()
+    rules_list = [dict(r) for r in rules]
+
+    # 3. Collect agent performance stats
+    agent_stats = get_agent_stats(days=days)
+
+    # 4. Collect current strategy params
+    params = db.get_all_params()
+
+    # 5. Collect recent signals (including failed ones)
+    signals = conn.execute(
+        """SELECT symbol, direction, confidence, status, reason, created_at
+           FROM signals WHERE created_at >= ? ORDER BY created_at DESC LIMIT 50""",
+        (cutoff,)
+    ).fetchall()
+    signals_list = [dict(s) for s in signals]
+
+    # 6. Collect recent reviews
+    reviews = conn.execute(
+        "SELECT date, summary, action_items FROM reviews ORDER BY date DESC LIMIT 5"
+    ).fetchall()
+    reviews_list = [dict(r) for r in reviews]
+
+    # Build the prompt
+    trades_summary = ""
+    if trades_list:
+        wins = sum(1 for t in trades_list if (t.get("profit") or 0) > 0)
+        losses = sum(1 for t in trades_list if (t.get("profit") or 0) < 0)
+        total_pnl = sum(t.get("profit") or 0 for t in trades_list)
+        trades_summary = f"共 {len(trades_list)} 笔交易: {wins}胜 {losses}负, 总盈亏 ${total_pnl:.2f}\n"
+        for t in trades_list[:20]:  # Last 20 trades
+            pnl = t.get("profit") or 0
+            symbol = t.get("symbol", "?")
+            direction = t.get("direction", "?")
+            entry = t.get("entry_price", 0)
+            exit_p = t.get("exit_price", 0)
+            reason = t.get("exit_reason", "")
+            trades_summary += f"  {symbol} {direction} 入场:{entry} 出场:{exit_p} 盈亏:${pnl:+.2f} ({reason})\n"
+    else:
+        trades_summary = "暂无交易记录\n"
+
+    rules_summary = ""
+    if rules_list:
+        for r in rules_list[:10]:
+            rules_summary += f"  [{r['category']}] {r['rule']} (可信度:{r['confidence']:.0f}% 应用:{r['times_applied']}次 正确:{r['times_correct']}次)\n"
+    else:
+        rules_summary = "暂无已学习规则\n"
+
+    signals_summary = ""
+    if signals_list:
+        for s in signals_list[:10]:
+            signals_summary += f"  {s['symbol']} {s['direction']} 置信度:{s['confidence']}% 状态:{s['status']} — {s.get('reason','')[:60]}\n"
+
+    agent_stats_summary = ""
+    if agent_stats:
+        for s in agent_stats:
+            err_rate = (s.get("errors", 0) / s["total_calls"] * 100) if s["total_calls"] > 0 else 0
+            agent_stats_summary += f"  {s['agent_id']}: {s['total_calls']}次调用, 平均延迟{s.get('avg_latency',0):.0f}ms, 错误率{err_rate:.0f}%\n"
+
+    prompt = f"""你是一位交易复盘分析师，请分析以下过去{days}天的交易数据，总结经验教训并提出优化建议。
+
+## 交易记录
+{trades_summary}
+
+## 信号记录（最近）
+{signals_summary}
+
+## 当前规则库
+{rules_summary}
+
+## Agent性能统计
+{agent_stats_summary}
+
+## 当前策略参数
+{json.dumps(params, indent=2, ensure_ascii=False)}
+
+## 要求
+请深入分析以上数据，找出：
+1. 成功交易的共同特征（什么条件下赚钱）
+2. 失败交易的共同特征（什么条件下亏钱）
+3. 需要新增的交易规则（具体可执行的条件判断）
+4. 策略参数调整建议（哪些参数需要调、调多少、为什么）
+
+用以下JSON格式回复（只回复JSON）：
+{{
+  "overall_assessment": "整体评价（2-3句话）",
+  "win_patterns": ["成功模式1", "成功模式2"],
+  "loss_patterns": ["失败模式1", "失败模式2"],
+  "new_rules": [
+    {{"category": "entry|exit|risk|market|time", "rule": "具体规则描述", "confidence": 50-100}}
+  ],
+  "param_adjustments": [
+    {{"param_name": "参数名", "current_value": 10, "suggested_value": 12, "reason": "调整原因"}}
+  ],
+  "priority_actions": ["最重要的改进项1", "最重要的改进项2"],
+  "agent_feedback": {{
+    "suggested_weight_changes": [
+      {{"agent_id": "bull_analyst", "current_weight": 1.0, "suggested_weight": 0.8, "reason": "原因"}}
+    ]
+  }}
+}}"""
+
+    # Call reviewer agent
+    result = _resolve_agent_call("reviewer", prompt)
+    _log_agent_call(result)
+
+    if result.get("error"):
+        return {"ok": False, "error": result["error"], "latency_ms": result.get("latency_ms", 0)}
+
+    # Parse response
+    response = result.get("response", "")
+    review_data = {}
+    try:
+        json_match = re.search(r'\{[\s\S]*\}', response, re.DOTALL)
+        if json_match:
+            review_data = json.loads(json_match.group())
+    except Exception:
+        return {"ok": False, "error": f"JSON解析失败: {response[:200]}", "latency_ms": result.get("latency_ms", 0)}
+
+    # Apply changes
+    applied = {"rules_added": 0, "params_adjusted": 0, "weights_updated": 0}
+
+    # Apply new rules
+    now = time.time()
+    for rule in review_data.get("new_rules", []):
+        category = rule.get("category", "market")
+        rule_text = rule.get("rule", "")
+        confidence = rule.get("confidence", 50)
+        if rule_text:
+            conn.execute(
+                """INSERT INTO rules (category, rule, source, confidence, times_applied, times_correct, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (category, rule_text, "reviewer", confidence, 0, 0, now, now)
+            )
+            applied["rules_added"] += 1
+
+    # Apply param adjustments
+    for adj in review_data.get("param_adjustments", []):
+        param_name = adj.get("param_name", "")
+        suggested = adj.get("suggested_value")
+        if param_name and suggested is not None:
+            param_row = conn.execute("SELECT * FROM strategy_params WHERE name=?", (param_name,)).fetchone()
+            if param_row:
+                min_val = param_row["min_val"]
+                max_val = param_row["max_val"]
+                if min_val is not None and max_val is not None:
+                    suggested = max(min_val, min(max_val, float(suggested)))
+                db.set_param(param_name, suggested)
+                applied["params_adjusted"] += 1
+
+    # Apply agent weight changes
+    for wc in review_data.get("agent_feedback", {}).get("suggested_weight_changes", []):
+        agent_id = wc.get("agent_id", "")
+        new_weight = wc.get("suggested_weight")
+        if agent_id and new_weight is not None:
+            update_agent_config(agent_id, {"weight": float(new_weight)})
+            applied["weights_updated"] += 1
+
+    # Store evolution summary as a learned insight
+    insight_key = f"review_insight_{int(now)}"
+    db.kv_set(insight_key, json.dumps({
+        "date": time.strftime("%Y-%m-%d"),
+        "assessment": review_data.get("overall_assessment", ""),
+        "win_patterns": review_data.get("win_patterns", []),
+        "loss_patterns": review_data.get("loss_patterns", []),
+        "priority_actions": review_data.get("priority_actions", []),
+    }, ensure_ascii=False))
+
+    conn.commit()
+
+    return {
+        "ok": True,
+        "review": review_data,
+        "applied": applied,
+        "latency_ms": result.get("latency_ms", 0),
+        "trades_analyzed": len(trades_list),
+        "rules_count": len(rules_list),
+    }
+
+
+def get_learned_knowledge() -> str:
+    """Get all learned knowledge (rules + recent insights) as a string for prompt injection."""
+    conn = db.get_conn()
+
+    # Get high-confidence rules
+    rules = conn.execute(
+        """SELECT category, rule, confidence FROM rules
+           WHERE confidence > 30 ORDER BY confidence DESC LIMIT 15"""
+    ).fetchall()
+
+    # Get recent review insights (last 3)
+    rows = conn.execute(
+        "SELECT key, value FROM kv_store WHERE key LIKE 'review_insight_%' ORDER BY updated_at DESC LIMIT 3"
+    ).fetchall()
+
+    knowledge_parts = []
+
+    if rules:
+        knowledge_parts.append("### 已学习的交易规则")
+        for r in rules:
+            knowledge_parts.append(f"  [{r['category']}] {r['rule']} (可信度:{r['confidence']:.0f}%)")
+
+    for row in rows:
+        try:
+            insight = json.loads(row["value"])
+            knowledge_parts.append(f"\n### 复盘洞察 ({insight.get('date', '?')})")
+            if insight.get("assessment"):
+                knowledge_parts.append(f"  评价: {insight['assessment']}")
+            if insight.get("win_patterns"):
+                knowledge_parts.append(f"  成功模式: {', '.join(insight['win_patterns'][:3])}")
+            if insight.get("loss_patterns"):
+                knowledge_parts.append(f"  失败模式: {', '.join(insight['loss_patterns'][:3])}")
+            if insight.get("priority_actions"):
+                knowledge_parts.append(f"  重点改进: {', '.join(insight['priority_actions'][:3])}")
+        except Exception:
+            pass
+
+    return "\n".join(knowledge_parts) if knowledge_parts else ""

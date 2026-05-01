@@ -688,6 +688,19 @@ async def handle_trading_committee(request):
     }
     return web.json_response(result)
 
+
+async def handle_review_evolution(request):
+    """POST /api/trading/review-evolution — run AI reviewer for self-evolution."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    days = data.get("days", 7)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, trading_agents.run_review_evolution, days)
+    return web.json_response(result)
+
+
 async def handle_evolution_params(request):
     """GET /api/evolution/params — current strategy parameters."""
     params = db.get_all_params()
@@ -837,6 +850,7 @@ def create_app():
     app.router.add_get("/api/agents/global-keys", handle_agent_global_keys_get)
     app.router.add_post("/api/agents/global-keys", handle_agent_global_keys)
     app.router.add_post("/api/trading/committee", handle_trading_committee)
+    app.router.add_post("/api/trading/review-evolution", handle_review_evolution)
 
     # Scheduler
     app.router.add_get("/api/scheduler/status", handle_scheduler_status)
