@@ -505,18 +505,22 @@ def sync_trades():
         # Check if already tracked
         existing = conn.execute("SELECT id FROM trades WHERE ticket=?", (ticket,)).fetchone()
         if not existing:
-            # New trade — record it
+            # New trade — record it with current timestamp
+            entry_time = pos.get("time", 0)
+            # MT5 time might be in seconds since epoch or milliseconds
+            if entry_time > 1e12:
+                entry_time = entry_time / 1000  # convert ms to seconds
             conn.execute(
                 """INSERT INTO trades (ticket, symbol, direction, lot_size, entry_price, entry_time,
                    stop_loss, take_profit, context)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
                 (ticket, pos["symbol"], "BUY" if pos["type"] == 0 else "SELL",
-                 pos["volume"], pos["price_open"], pos["time"],
+                 pos["volume"], pos["price_open"], entry_time,
                  pos.get("sl", 0), pos.get("tp", 0),
                  json.dumps({"magic": pos.get("magic"), "comment": pos.get("comment")}))
             )
 
-        # Update MFE/MAE (max favorable/adverse excursion)
+        # Update live profit and MFE/MAE
         trade = conn.execute("SELECT id, entry_price, max_favorable, max_adverse FROM trades WHERE ticket=?", (ticket,)).fetchone()
         if trade:
             current = pos["price_current"]
@@ -533,17 +537,37 @@ def sync_trades():
             if adverse > trade["max_adverse"]:
                 conn.execute("UPDATE trades SET max_adverse=? WHERE id=?", (adverse, trade["id"]))
 
+            # Update live profit from MT5
+            mt5_profit = pos.get("profit", 0)
+            conn.execute("UPDATE trades SET profit=? WHERE id=?", (mt5_profit, trade["id"]))
+
     # Detect closed trades (were in trades table but no longer open)
     tracked = conn.execute("SELECT * FROM trades WHERE exit_time IS NULL").fetchall()
     for t in tracked:
         if t["ticket"] not in current_tickets:
-            # Position closed — find the exit info from deal history
-            # For now, mark with current data
+            # Position closed — get final profit from MT5 deal history
+            final_profit = 0
+            try:
+                deals = mt5_data.daemon.call("deals", ticket=t["ticket"])
+                if deals.get("ok") and deals.get("deals"):
+                    # Sum profit from all deals for this position
+                    for deal in deals["deals"]:
+                        final_profit += deal.get("profit", 0)
+            except Exception:
+                pass
+
+            # If we couldn't get deal profit, use last known profit from trades table
+            if final_profit == 0 and t["profit"]:
+                final_profit = t["profit"]
+
+            entry_time = t["entry_time"] or time.time()
+            hold_duration = max(0, time.time() - entry_time)
+
             conn.execute(
                 """UPDATE trades SET exit_time=?, exit_reason='sync_detected',
                    profit=?, hold_duration=?
                    WHERE id=?""",
-                (time.time(), 0, time.time() - t["entry_time"], t["id"])
+                (time.time(), final_profit, hold_duration, t["id"])
             )
 
     conn.commit()
