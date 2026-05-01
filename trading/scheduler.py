@@ -137,11 +137,11 @@ class TradingScheduler:
                 self._status["next_analysis_at"] = self._last_analysis + interval
                 self._status["countdown"] = max(0, int(interval - time_since_last))
 
-                if time_since_last >= interval:
-                    self._do_analysis_cycle()
-                    self._last_analysis = now
-                    self._status["countdown"] = interval
-                    self._status["next_analysis_at"] = now + interval
+                if time_since_last >= interval and not self._status.get("analyzing"):
+                    # Run analysis in a thread so it doesn't block the loop
+                    self._status["analyzing"] = True
+                    t = threading.Thread(target=self._run_analysis_threadsafe, daemon=True)
+                    t.start()
 
                 # 5. Trade sync
                 if mt5_ready and now - self._last_trade_sync >= self._config["trade_sync_interval"]:
@@ -188,6 +188,19 @@ class TradingScheduler:
                         logger.debug("Fetched %d candles for %s %s", len(candles), symbol, tf)
                 except Exception as e:
                     logger.warning("Candle fetch failed for %s %s: %s", symbol, tf, e)
+
+    def _run_analysis_threadsafe(self):
+        """Run analysis in a background thread, update status when done."""
+        try:
+            self._do_analysis_cycle()
+        except Exception as e:
+            logger.exception("Background analysis failed")
+        finally:
+            self._last_analysis = time.time()
+            self._status["analyzing"] = False
+            interval = self._config["analysis_interval"]
+            self._status["countdown"] = interval
+            self._status["next_analysis_at"] = time.time() + interval
 
     def _do_analysis_cycle(self) -> dict:
         """Run analysis and generate signals for all symbols."""

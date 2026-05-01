@@ -1477,12 +1477,15 @@
             if (d.state === 'holding') {
               el.className = 'status-badge connecting';
               el.innerHTML = `<span class="dot"></span> 持仓中(${positions}) · ${modeLabel}`;
+            } else if (d.analyzing) {
+              el.className = 'status-badge connecting';
+              el.innerHTML = `<span class="dot"></span> ${modeLabel} · 分析中...`;
             } else if (countdown > 0) {
               const min = Math.floor(countdown / 60);
               const sec = countdown % 60;
               el.innerHTML = `<span class="dot"></span> ${modeLabel} · ${min}:${String(sec).padStart(2,'0')}`;
             } else {
-              el.innerHTML = `<span class="dot"></span> ${modeLabel} · 分析中...`;
+              el.innerHTML = `<span class="dot"></span> ${modeLabel} · 等待分析...`;
             }
           } else {
             schedulerRunning = false;
