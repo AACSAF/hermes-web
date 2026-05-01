@@ -30,7 +30,7 @@ class TradingScheduler:
             "trade_sync_interval": 30,     # seconds between trade syncs
             "trailing_check_interval": 15, # seconds between trailing stop checks
             "mode": "committee",           # "single" (old) or "committee" (multi-agent)
-            "auto_execute": False,         # auto-execute approved signals
+            "auto_execute": True,          # auto-execute approved signals (default on)
             "auto_approve_confidence": 70, # auto-approve if confidence >= this
             "last_committee_result": None, # cache last committee result
         }

@@ -609,7 +609,7 @@
             <div>
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">自动执行</div>
               <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
-                <input type="checkbox" id="schedAutoExec" style="accent-color:var(--accent);">
+                <input type="checkbox" id="schedAutoExec" checked style="accent-color:var(--accent);">
                 <span style="font-size:12px;color:var(--text-secondary);">信号自动下单</span>
               </label>
             </div>
@@ -1348,9 +1348,20 @@
         let html = `<table class="mt5-table"><tr><th>ID</th><th>品种</th><th>方向</th><th>信心</th><th>入场</th><th>止损</th><th>止盈</th><th>手数</th><th>状态</th><th>操作</th></tr>`;
         for (const s of d.signals) {
           const dirClass = s.direction === 'BUY' ? 'type-buy' : 'type-sell';
-          const statusColor = s.status === 'pending' ? 'var(--warn)' : s.status === 'approved' ? 'var(--accent)' : s.status === 'executed' ? 'var(--success)' : 'var(--text-muted)';
+          const statusMap = {
+            'pending': {color: 'var(--warn)', label: '⏳ 待处理'},
+            'approved': {color: 'var(--accent)', label: '✅ 已批准'},
+            'executed': {color: 'var(--success)', label: '🚀 已执行'},
+            'rejected': {color: 'var(--error)', label: '❌ 已拒绝'},
+            'expired': {color: 'var(--text-muted)', label: '⌛ 已过期'},
+            'failed': {color: 'var(--error)', label: '❌ 执行失败'},
+          };
+          const st = statusMap[s.status] || {color: 'var(--text-muted)', label: s.status};
           let actions = '';
-          if (s.status === 'pending') {
+          // In committee mode, signals are auto-approved/executed — show status only
+          if (s.mode === 'committee') {
+            actions = `<span style="font-size:11px;color:var(--text-muted);">自动</span>`;
+          } else if (s.status === 'pending') {
             actions = `<button class="btn btn-sm btn-outline" style="font-size:11px;padding:3px 8px;" onclick="approveSignal(${s.id})">✓</button> <button class="btn btn-sm btn-outline" style="font-size:11px;padding:3px 8px;color:var(--error);" onclick="rejectSignal(${s.id})">✕</button>`;
           } else if (s.status === 'approved') {
             actions = `<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 8px;" onclick="executeSignal(${s.id})">执行</button>`;
@@ -1359,7 +1370,7 @@
             <td>${s.id}</td><td>${s.symbol}</td><td><span class="${dirClass}">${s.direction}</span></td>
             <td>${s.confidence}%</td><td>${fmtNum(s.entry_price, 5)}</td>
             <td>${s.stop_loss ? fmtNum(s.stop_loss, 5) : '-'}</td><td>${s.take_profit ? fmtNum(s.take_profit, 5) : '-'}</td>
-            <td>${s.lot_size}</td><td style="color:${statusColor}">${s.status}</td><td>${actions}</td>
+            <td>${s.lot_size}</td><td style="color:${st.color}">${st.label}</td><td>${actions}</td>
           </tr>`;
         }
         html += '</table>';
@@ -1528,9 +1539,22 @@
           html += `<div style="font-size:13px;margin-top:8px;color:var(--text-primary);">${escHtml(result.reasons)}</div>`;
         }
         if (result.signal_id) {
-          html += `<div style="margin-top:8px;padding:6px 12px;background:var(--success-dim);border-radius:8px;font-size:12px;color:var(--success);">✅ 信号已创建 (ID: ${result.signal_id})</div>`;
+          const autoExec = d.config?.auto_execute;
+          if (autoExec) {
+            html += `<div style="margin-top:8px;padding:6px 12px;background:var(--success-dim);border-radius:8px;font-size:12px;color:var(--success);">🚀 已自动下单 (信号 #${result.signal_id}) · ${direction} ${symbol}</div>`;
+            if (result.executed) {
+              const ex = result.executed;
+              if (ex.ok) {
+                html += `<div style="margin-top:4px;padding:4px 12px;font-size:11px;color:var(--text-secondary);">✅ MT5执行成功 · 价格: ${ex.price || '-'} · 手数: ${result.lot_size || '-'}</div>`;
+              } else {
+                html += `<div style="margin-top:4px;padding:4px 12px;font-size:11px;color:var(--error);">❌ MT5执行失败: ${escHtml(ex.error || '未知错误')}</div>`;
+              }
+            }
+          } else {
+            html += `<div style="margin-top:8px;padding:6px 12px;background:var(--success-dim);border-radius:8px;font-size:12px;color:var(--success);">✅ 信号已创建 (ID: ${result.signal_id}) — 等待手动执行</div>`;
+          }
         } else if (direction === 'HOLD') {
-          html += `<div style="margin-top:8px;padding:6px 12px;background:var(--warn-dim);border-radius:8px;font-size:12px;color:var(--warn);">⏸️ HOLD — 无交易信号</div>`;
+          html += `<div style="margin-top:8px;padding:6px 12px;background:var(--warn-dim);border-radius:8px;font-size:12px;color:var(--warn);">⏸️ HOLD — 等待下次分析</div>`;
         }
         html += '</div>';
         resultDiv.innerHTML = html;
