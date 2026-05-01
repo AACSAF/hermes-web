@@ -618,19 +618,11 @@
               <button class="btn btn-outline btn-sm" onclick="runEvolution()">执行进化</button>
             </div>
             <div id="evolutionBody" style="padding:16px;font-size:13px;color:var(--text-secondary);">
-              点击"执行进化"让 AI 优化策略参数
+              点击"执行进化"让 AI 优化交易策略
             </div>
           </div>
         </div>
 
-        <!-- Strategy Parameters -->
-        <div class="section" style="margin-top:16px;">
-          <div class="section-header">
-            <h3>⚙️ 策略参数</h3>
-            <button class="btn btn-outline btn-sm" onclick="loadParams()">刷新</button>
-          </div>
-          <div id="paramsBody" style="padding:8px;"><div class="empty-state">加载中...</div></div>
-        </div>
 
       </div>
     </div>
@@ -1417,31 +1409,12 @@
         html += '</div>';
         $('evolutionBody').innerHTML = html;
         showToast('进化完成');
-        loadParams();
       } catch(e) { showToast('进化失败', true); }
     }
-
-    async function loadParams() {
-      try {
-        const r = await fetch('/api/evolution/params');
-        const d = await r.json();
-        if (!d.ok) return;
-
-        let html = `<table class="mt5-table"><tr><th>参数</th><th>值</th><th>说明</th><th>范围</th></tr>`;
-        for (const p of d.params) {
-          const range = (p.min_val !== null && p.max_val !== null) ? `${p.min_val} ~ ${p.max_val}` : '-';
-          html += `<tr><td><strong>${p.name}</strong></td><td>${p.value}</td><td style="color:var(--text-secondary);font-size:12px;">${p.description||'-'}</td><td>${range}</td></tr>`;
-        }
-        html += '</table>';
-        $('paramsBody').innerHTML = html;
-      } catch(e) {}
-    }
-
     // ══════════════════════════════════════════════════════
     // Init
     // ══════════════════════════════════════════════════════
     loadSessions();
-    loadParams();
     $('inputBox').focus();
   </script>
 </body>
