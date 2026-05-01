@@ -263,6 +263,12 @@ class TradingScheduler:
         if decision.get("direction") in ("BUY", "SELL") and decision.get("confidence", 0) >= 60:
             conn = db.get_conn()
             now = time.time()
+
+            # Lot size: 0.01~0.05, scales with confidence
+            confidence = decision.get("confidence", 60)
+            lot_size = round(max(0.01, min(0.05, 0.01 + (confidence - 60) / 800)), 2)
+            # 60% -> 0.01, 70% -> 0.02, 80% -> 0.03, 90% -> 0.04, 100% -> 0.05
+
             cursor = conn.execute(
                 """INSERT INTO signals (symbol, direction, confidence, entry_price, stop_loss, take_profit,
                    lot_size, reason, indicators, risk_pct, mode, status, created_at, expires_at)
@@ -270,7 +276,7 @@ class TradingScheduler:
                 (symbol, decision["direction"], decision.get("confidence", 60),
                  decision.get("entry_price", market_data["price"]),
                  decision.get("stop_loss", 0), decision.get("take_profit", 0),
-                 decision.get("lot_size_suggestion", 0.01),
+                 lot_size,
                  decision.get("reasoning", ""),
                  json.dumps(market_data["indicators"]),
                  1.0, "committee",

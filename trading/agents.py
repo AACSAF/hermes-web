@@ -106,7 +106,7 @@ AGENT_ROLES = {
   "entry_price": 入场价,
   "stop_loss": 止损价,
   "take_profit": 止盈价,
-  "lot_size_suggestion": 建议手数,
+  "lot_size_suggestion": 建议手数(系统会根据置信度自动调整0.01-0.05),
   "reasoning": "综合分析逻辑（2-3句话）",
   "dissenting_view": "反对意见（如有）",
   "risk_note": "风险提示"

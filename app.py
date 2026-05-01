@@ -665,14 +665,16 @@ async def handle_trading_committee(request):
     if decision.get("direction") in ("BUY", "SELL") and decision.get("confidence", 0) >= 60:
         conn = db.get_conn()
         now = time.time()
+        confidence = decision.get("confidence", 60)
+        lot_size = round(max(0.01, min(0.05, 0.01 + (confidence - 60) / 800)), 2)
         cursor = conn.execute(
             """INSERT INTO signals (symbol, direction, confidence, entry_price, stop_loss, take_profit,
                lot_size, reason, indicators, risk_pct, mode, status, created_at, expires_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (symbol, decision["direction"], decision.get("confidence", 60),
+            (symbol, decision["direction"], confidence,
              decision.get("entry_price", market_data["price"]),
              decision.get("stop_loss", 0), decision.get("take_profit", 0),
-             decision.get("lot_size_suggestion", 0.01),
+             lot_size,
              decision.get("reasoning", ""),
              json.dumps(market_data["indicators"]),
              1.0, "committee",
