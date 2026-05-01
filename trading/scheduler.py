@@ -216,18 +216,24 @@ class TradingScheduler:
                 # Auto-approve and auto-execute
                 if result.get("ok") and result.get("direction") in ("BUY", "SELL"):
                     confidence = result.get("confidence", 0)
-                    if confidence >= self._config.get("auto_approve_confidence", 70):
-                        signal_id = result.get("signal_id")
-                        if signal_id:
+                    signal_id = result.get("signal_id")
+                    if signal_id:
+                        # In auto_execute mode: always approve and execute immediately
+                        # In manual mode: only approve if confidence >= threshold
+                        if self._config.get("auto_execute"):
                             conn = db.get_conn()
                             conn.execute("UPDATE signals SET status='approved' WHERE id=? AND status='pending'", (signal_id,))
                             conn.commit()
                             logger.info("Auto-approved signal %s (conf=%d)", signal_id, confidence)
 
-                            if self._config.get("auto_execute"):
-                                exec_result = engine.execute_signal(signal_id)
-                                result["executed"] = exec_result
-                                logger.info("Auto-executed signal %s: %s", signal_id, exec_result)
+                            exec_result = engine.execute_signal(signal_id)
+                            result["executed"] = exec_result
+                            logger.info("Auto-executed signal %s: %s", signal_id, exec_result)
+                        elif confidence >= self._config.get("auto_approve_confidence", 70):
+                            conn = db.get_conn()
+                            conn.execute("UPDATE signals SET status='approved' WHERE id=? AND status='pending'", (signal_id,))
+                            conn.commit()
+                            logger.info("Auto-approved signal %s (conf=%d)", signal_id, confidence)
 
                     logger.info("Signal: %s %s conf=%d sl=%.2f tp=%.2f",
                                 symbol, result.get("direction"), result.get("confidence", 0),
