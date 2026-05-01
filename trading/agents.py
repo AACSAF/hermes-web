@@ -154,23 +154,23 @@ MODEL_PROVIDERS = {
     },
     "deepseek": {
         "name": "DeepSeek",
-        "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
         "description": "DeepSeek",
         "models": [
-            {"id": "deepseek-chat", "name": "DeepSeek V3", "speed": "中"},
-            {"id": "deepseek-reasoner", "name": "DeepSeek R1 (推理)", "speed": "慢"},
+            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro (最强)", "speed": "中"},
+            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash (快速)", "speed": "快"},
         ],
     },
     "minimax": {
         "name": "MiniMax",
         "base_url": "https://api.minimax.chat/v1",
-        "default_model": "MiniMax-Text-01",
+        "default_model": "MiniMax-M2.7",
         "description": "MiniMax",
         "models": [
-            {"id": "MiniMax-Text-01", "name": "MiniMax Text 01 (旗舰)", "speed": "慢"},
-            {"id": "abab6.5s-chat", "name": "abab 6.5s (轻量)", "speed": "快"},
-            {"id": "abab5.5-chat", "name": "abab 5.5", "speed": "快"},
+            {"id": "MiniMax-M2.7", "name": "MiniMax M2.7 (最新旗舰)", "speed": "中"},
+            {"id": "MiniMax-M2.5", "name": "MiniMax M2.5", "speed": "中"},
+            {"id": "MiniMax-M2.1", "name": "MiniMax M2.1 (轻量)", "speed": "快"},
         ],
     },
 }
