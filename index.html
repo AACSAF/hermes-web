@@ -1460,6 +1460,7 @@
     let _schedulerPollTimer = null;
     function startSchedulerPoll() {
       if (_schedulerPollTimer) return;
+      let _prevAnalyzing = false;
       _schedulerPollTimer = setInterval(async () => {
         try {
           const r = await fetch('/api/scheduler/status');
@@ -1480,10 +1481,18 @@
             } else if (d.analyzing) {
               el.className = 'status-badge connecting';
               el.innerHTML = `<span class="dot"></span> ${modeLabel} · 分析中...`;
+              _prevAnalyzing = true;
             } else if (countdown > 0) {
               const min = Math.floor(countdown / 60);
               const sec = countdown % 60;
               el.innerHTML = `<span class="dot"></span> ${modeLabel} · ${min}:${String(sec).padStart(2,'0')}`;
+              // If we were analyzing and now done → show results
+              if (_prevAnalyzing) {
+                _prevAnalyzing = false;
+                loadSignals();
+                loadTradeHistory();
+                showSchedulerResult(d);
+              }
             } else {
               el.innerHTML = `<span class="dot"></span> ${modeLabel} · 等待分析...`;
             }
@@ -1493,6 +1502,39 @@
           }
         } catch(e) {}
       }, 3000);
+    }
+
+    function showSchedulerResult(d) {
+      const sig = d.last_signals;
+      if (!sig) return;
+      const firstKey = Object.keys(sig)[0];
+      const result = sig[firstKey];
+      if (!result || !result.ok) return;
+      const direction = result.direction || 'HOLD';
+      const confidence = result.confidence || 0;
+      const color = direction === 'BUY' ? 'var(--success)' : direction === 'SELL' ? 'var(--error)' : 'var(--warn)';
+      const symbol = result.symbol || firstKey;
+      const mode = result.mode || '';
+      const latency = result.total_latency_ms ? ` (${(result.total_latency_ms/1000).toFixed(0)}s)` : '';
+      showToast(`${symbol} ${direction} ${confidence}%${latency}`, direction === 'HOLD');
+      // Update analysis result div
+      const resultDiv = $('analysisResult');
+      if (resultDiv) {
+        resultDiv.style.display = 'block';
+        let html = `<div style="padding:16px;">
+          <div style="font-size:18px;font-weight:700;color:${color};">📊 ${symbol} · ${direction}</div>
+          <div style="font-size:13px;color:var(--text-secondary);margin-top:4px;">置信度: ${confidence}% ${mode === 'committee' ? '· 委员会决策' : '· AI决策'}${latency}</div>`;
+        if (result.reasons) {
+          html += `<div style="font-size:13px;margin-top:8px;color:var(--text-primary);">${escHtml(result.reasons)}</div>`;
+        }
+        if (result.signal_id) {
+          html += `<div style="margin-top:8px;padding:6px 12px;background:var(--success-dim);border-radius:8px;font-size:12px;color:var(--success);">✅ 信号已创建 (ID: ${result.signal_id})</div>`;
+        } else if (direction === 'HOLD') {
+          html += `<div style="margin-top:8px;padding:6px 12px;background:var(--warn-dim);border-radius:8px;font-size:12px;color:var(--warn);">⏸️ HOLD — 无交易信号</div>`;
+        }
+        html += '</div>';
+        resultDiv.innerHTML = html;
+      }
     }
     function stopSchedulerPoll() {
       if (_schedulerPollTimer) { clearInterval(_schedulerPollTimer); _schedulerPollTimer = null; }
