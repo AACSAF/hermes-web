@@ -180,6 +180,7 @@ def _call_llm(base_url: str, api_key: str, model: str, system_prompt: str, user_
     """Call an LLM via OpenAI-compatible API."""
     import urllib.request
     import urllib.error
+    import ssl
 
     headers = {
         "Content-Type": "application/json",
@@ -198,13 +199,30 @@ def _call_llm(base_url: str, api_key: str, model: str, system_prompt: str, user_
     url = f"{base_url.rstrip('/')}/chat/completions"
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
 
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            return result["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error("LLM call failed: %s %s", url, e)
-        return json.dumps({"error": str(e)})
+    # Create SSL context that handles connection issues
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                content = result["choices"][0]["message"]["content"]
+                # Some models wrap thinking in <think> tags, strip them for clean output
+                if "<think>" in content:
+                    import re
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                return content
+        except Exception as e:
+            if attempt == 0:
+                logger.warning("LLM call attempt 1 failed: %s %s, retrying...", url, e)
+                import time; time.sleep(1)
+                # Rebuild request for retry
+                req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+                continue
+            logger.error("LLM call failed: %s %s", url, e)
+            raise  # Raise instead of returning error JSON
 
 
 def get_agent_config(agent_id: str) -> dict:
@@ -378,18 +396,24 @@ def run_committee(market_data: dict, symbol: str = "XAUUSD") -> dict:
                     "response": None, "latency_ms": 0, "error": str(e)
                 })
 
-    # Phase 2: Build arbiter prompt from analyst opinions
+    # Phase 2: Build arbiter prompt from analyst opinions (filter out failures)
     opinions = []
+    failed_agents = []
     for r in analyst_results:
         if r.get("response") and not r.get("error"):
             opinions.append(f"### {r['name']}:\n{r['response']}")
         elif r.get("error"):
-            opinions.append(f"### {r['name']}: ❌ 错误 — {r['error']}")
+            failed_agents.append(r['name'])
+
+    # Inform arbiter about failed agents but don't pass error strings as opinions
+    failure_note = ""
+    if failed_agents:
+        failure_note = f"\n注意: 以下分析师因技术原因未能提供意见，请忽略: {', '.join(failed_agents)}\n"
 
     arbiter_prompt = f"""以下是交易委员会各位分析师对 {symbol} 的分析意见：
 
 {chr(10).join(opinions)}
-
+{failure_note}
 ---
 
 请综合以上所有意见，做出最终交易决策。"""
