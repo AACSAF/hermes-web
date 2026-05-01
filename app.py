@@ -380,11 +380,100 @@ async def handle_mt5_disconnect(request):
 # ── Trading Engine API ─────────────────────────────────────────────
 
 async def handle_trading_analyze(request):
-    """GET /api/trading/analyze/{symbol} — full market analysis."""
+    """GET /api/trading/analyze/{symbol} — full market analysis (rule-based)."""
     symbol = request.match_info["symbol"]
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, engine.analyze_market, symbol)
     return web.json_response(result)
+
+
+async def handle_trading_ai_analyze(request):
+    """POST /api/trading/ai-analyze — AI-driven market analysis (uses Hermes)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    symbol = data.get("symbol", "XAUUSD")
+
+    loop = asyncio.get_event_loop()
+
+    # Collect market data
+    market_data = await loop.run_in_executor(None, engine.collect_market_data, symbol)
+    if not market_data.get("ok"):
+        return web.json_response(market_data)
+
+    # Build AI prompt
+    prompt = engine.build_ai_prompt(symbol, market_data)
+
+    # Ask Hermes AI to analyze
+    try:
+        agent = get_agent()
+
+        def run_ai():
+            result = agent.chat(prompt)
+            return result
+
+        ai_response = await loop.run_in_executor(None, run_ai)
+
+        # Try to parse JSON from response
+        import re
+        json_match = re.search(r'\{[^{}]*\}', str(ai_response), re.DOTALL)
+        if json_match:
+            ai_decision = json.loads(json_match.group())
+        else:
+            ai_decision = {"direction": "FLAT", "reasoning": str(ai_response), "confidence": 0}
+
+        # Store signal if not FLAT
+        signal_id = None
+        if ai_decision.get("direction") in ("BUY", "SELL") and ai_decision.get("confidence", 0) >= 50:
+            conn = db.get_conn()
+            now = time.time()
+            account = market_data.get("account", {})
+            equity = account.get("equity", 0)
+
+            # Calculate lot size if AI didn't suggest one
+            lot_size = ai_decision.get("lot_size_suggestion", 0.01)
+            if lot_size <= 0:
+                lot_size = 0.01
+
+            # Risk check
+            positions_result = mt5_data.daemon.call("positions")
+            pos_list = positions_result.get("positions", []) if positions_result.get("ok") else []
+            risk_check = risk.check_trade_allowed(symbol, ai_decision["direction"], equity, pos_list)
+
+            cursor = conn.execute(
+                """INSERT INTO signals (symbol, direction, confidence, entry_price, stop_loss, take_profit,
+                   lot_size, reason, indicators, risk_pct, mode, status, created_at, expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, ai_decision["direction"], ai_decision.get("confidence", 60),
+                 ai_decision.get("entry_price", market_data["price"]),
+                 ai_decision.get("stop_loss", 0), ai_decision.get("take_profit", 0),
+                 lot_size, ai_decision.get("reasoning", ""),
+                 json.dumps(market_data["indicators"]),
+                 1.0, "observe",
+                 "pending" if risk_check.get("allowed", True) else "rejected",
+                 now, now + 300)
+            )
+            conn.commit()
+            signal_id = cursor.lastrowid
+
+        return web.json_response({
+            "ok": True,
+            "symbol": symbol,
+            "mode": "ai_driven",
+            "ai_decision": ai_decision,
+            "signal_id": signal_id,
+            "market_data": {
+                "price": market_data["price"],
+                "trend": market_data["trend"],
+                "indicators": market_data["indicators"],
+                "candle_patterns": market_data["candle_patterns"],
+            },
+        })
+
+    except Exception as e:
+        logger.exception("AI analysis failed")
+        return web.json_response({"ok": False, "error": str(e)})
 
 
 async def handle_trading_signal(request):
@@ -606,6 +695,7 @@ def create_app():
 
     # Trading Engine
     app.router.add_get("/api/trading/analyze/{symbol}", handle_trading_analyze)
+    app.router.add_post("/api/trading/ai-analyze", handle_trading_ai_analyze)
     app.router.add_post("/api/trading/signal", handle_trading_signal)
     app.router.add_get("/api/trading/signals", handle_trading_signals)
     app.router.add_post("/api/trading/execute", handle_trading_execute)

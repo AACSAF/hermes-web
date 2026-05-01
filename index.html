@@ -575,7 +575,8 @@
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
           <span style="font-size:13px;color:var(--text-secondary)">分析品种:</span>
           <input id="tradeSymbol" value="XAUUSD" style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:var(--text-primary);font-size:13px;width:120px;">
-          <button class="btn btn-outline btn-sm" onclick="analyzeSymbol()">📊 分析</button>
+          <button class="btn btn-outline btn-sm" onclick="analyzeSymbol()">📊 指标分析</button>
+          <button class="btn btn-primary btn-sm" onclick="aiAnalyze()">🧠 AI 智能分析</button>
           <button class="btn btn-outline btn-sm" onclick="generateSignal()">⚡ 生成信号</button>
         </div>
 
@@ -1148,6 +1149,95 @@
         el.innerHTML = html;
         showToast('分析完成');
       } catch(e) { showToast('分析失败: ' + e.message, true); }
+    }
+
+    async function aiAnalyze() {
+      const symbol = $('tradeSymbol').value.trim().toUpperCase();
+      if (!symbol) return;
+      showToast('🧠 AI 正在深度分析 ' + symbol + '...');
+      const el = $('analysisResult');
+      el.style.display = 'block';
+      el.innerHTML = '<div style="padding:24px;text-align:center;"><div class="spinner" style="width:24px;height:24px;margin:0 auto 12px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;"></div><div style="color:var(--text-secondary);">AI 正在收集市场数据并深度分析中，请稍候...</div></div>';
+
+      try {
+        const r = await fetch('/api/trading/ai-analyze', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({symbol})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error || 'AI 分析失败', true); el.style.display='none'; return; }
+
+        const ai = d.ai_decision || {};
+        const md = d.market_data || {};
+        const dirColor = ai.direction === 'BUY' ? 'var(--success)' : ai.direction === 'SELL' ? 'var(--error)' : 'var(--text-muted)';
+        const dirIcon = ai.direction === 'BUY' ? '🟢' : ai.direction === 'SELL' ? '🔴' : '⚪';
+
+        let html = `<div style="padding:16px;">`;
+
+        // Header
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:16px;font-weight:700;">${symbol}</span>
+            <span style="background:var(--accent-glow);padding:2px 8px;border-radius:6px;font-size:11px;color:var(--accent);">🧠 AI 驱动</span>
+          </div>
+          <div style="font-size:22px;font-weight:700;color:${dirColor}">${dirIcon} ${ai.direction || 'N/A'}</div>
+        </div>`;
+
+        // Key metrics
+        html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;padding:12px;background:var(--bg-tertiary);border-radius:10px;">`;
+        html += `<div style="text-align:center;"><span style="font-size:10px;color:var(--text-muted);display:block;">价格</span><strong style="font-size:14px;">${fmtNum(ai.entry_price || md.price, 2)}</strong></div>`;
+        html += `<div style="text-align:center;"><span style="font-size:10px;color:var(--text-muted);display:block;">信心</span><strong style="font-size:14px;color:${ai.confidence >= 70 ? 'var(--success)' : ai.confidence >= 50 ? 'var(--warn)' : 'var(--error)'}">${ai.confidence || 0}%</strong></div>`;
+        html += `<div style="text-align:center;"><span style="font-size:10px;color:var(--text-muted);display:block;">止损</span><strong style="font-size:14px;color:var(--error);">${ai.stop_loss ? fmtNum(ai.stop_loss, 2) : '-'}</strong></div>`;
+        html += `<div style="text-align:center;"><span style="font-size:10px;color:var(--text-muted);display:block;">止盈</span><strong style="font-size:14px;color:var(--success);">${ai.take_profit ? fmtNum(ai.take_profit, 2) : '-'}</strong></div>`;
+        html += `<div style="text-align:center;"><span style="font-size:10px;color:var(--text-muted);display:block;">手数</span><strong style="font-size:14px;">${ai.lot_size_suggestion || '-'}</strong></div>`;
+        html += `</div>`;
+
+        // AI reasoning
+        if (ai.reasoning) {
+          html += `<div style="background:var(--bg-tertiary);border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:12px;">
+            <div style="font-size:11px;color:var(--accent);margin-bottom:6px;font-weight:600;">🧠 AI 分析逻辑</div>
+            <div style="font-size:13px;line-height:1.6;color:var(--text-primary);">${escHtml(ai.reasoning)}</div>
+          </div>`;
+        }
+
+        // Key factors
+        if (ai.key_factors && ai.key_factors.length) {
+          html += `<div style="margin-bottom:12px;"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">关键因素</div>`;
+          for (const f of ai.key_factors) {
+            html += `<span style="display:inline-block;background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:12px;margin:2px 4px 2px 0;color:var(--text-secondary);">📌 ${escHtml(f)}</span>`;
+          }
+          html += `</div>`;
+        }
+
+        // Risk note
+        if (ai.risk_note) {
+          html += `<div style="background:var(--warn-dim);padding:10px 14px;border-radius:8px;font-size:12px;color:var(--warn);margin-bottom:12px;">⚠️ ${escHtml(ai.risk_note)}</div>`;
+        }
+
+        // Market context
+        html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">`;
+        html += `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:11px;">趋势: ${md.trend || '-'}</span>`;
+        if (md.indicators) {
+          html += `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:11px;">RSI: ${md.indicators.rsi}</span>`;
+          html += `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:11px;">MACD: ${md.indicators.macd_cross}</span>`;
+          html += `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:11px;">BB: ${md.indicators.bb_position}</span>`;
+        }
+        if (md.candle_patterns && md.candle_patterns.length) {
+          html += `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:11px;">K线: ${md.candle_patterns.join(', ')}</span>`;
+        }
+        html += `</div>`;
+
+        // Signal created note
+        if (d.signal_id) {
+          html += `<div style="background:var(--success-dim);padding:10px 14px;border-radius:8px;font-size:12px;color:var(--success);margin-top:8px;">✅ 信号已创建 (ID: ${d.signal_id})，请在信号列表中审批</div>`;
+        }
+
+        html += `</div>`;
+
+        el.innerHTML = html;
+        showToast('AI 分析完成');
+        loadSignals();
+      } catch(e) { showToast('AI 分析失败: ' + e.message, true); el.style.display='none'; }
     }
 
     async function generateSignal() {
