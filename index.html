@@ -574,6 +574,48 @@
       </div>
       <div class="mt5-content" style="padding:20px;overflow-y:auto;">
 
+        <!-- Scheduler Config -->
+        <div class="section" style="margin-bottom:16px;">
+          <div class="section-header">
+            <h3>⚙️ 自动交易设置</h3>
+            <button class="btn btn-outline btn-sm" onclick="saveSchedulerConfig()">保存配置</button>
+          </div>
+          <div style="padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">分析模式</div>
+              <select id="schedMode" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
+                <option value="committee">🏛️ 多Agent委员会</option>
+                <option value="single">🤖 单Agent分析</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">分析间隔</div>
+              <select id="schedInterval" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
+                <option value="120">2分钟</option>
+                <option value="300" selected>5分钟</option>
+                <option value="600">10分钟</option>
+                <option value="900">15分钟</option>
+                <option value="1800">30分钟</option>
+                <option value="3600">1小时</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">自动审批阈值</div>
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 0;">
+                <input type="range" id="schedConfidence" min="50" max="95" step="5" value="70" style="flex:1;accent-color:var(--accent);" oninput="$('confVal').textContent=this.value+'%'">
+                <span id="confVal" style="font-size:12px;color:var(--text-primary);min-width:35px;">70%</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">自动执行</div>
+              <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
+                <input type="checkbox" id="schedAutoExec" style="accent-color:var(--accent);">
+                <span style="font-size:12px;color:var(--text-secondary);">信号自动下单</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <!-- Symbol selector -->
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
           <span style="font-size:13px;color:var(--text-secondary)">分析品种:</span>
@@ -1362,6 +1404,24 @@
         html += '</table>';
         $('historyBody').innerHTML = html;
       } catch(e) {}
+    }
+
+    async function saveSchedulerConfig() {
+      const config = {
+        mode: $('schedMode').value,
+        analysis_interval: parseInt($('schedInterval').value),
+        auto_approve_confidence: parseInt($('schedConfidence').value),
+        auto_execute: $('schedAutoExec').checked,
+      };
+      try {
+        const r = await fetch('/api/scheduler/config', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(config)
+        });
+        const d = await r.json();
+        if (d.ok) showToast('配置已保存');
+        else showToast(d.error || '保存失败', true);
+      } catch(e) { showToast('保存失败', true); }
     }
 
     async function startScheduler() {

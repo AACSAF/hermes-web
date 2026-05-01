@@ -10,6 +10,7 @@ from . import engine
 from . import review
 from . import evolution
 from . import risk
+from . import agents as trading_agents
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,16 @@ class TradingScheduler:
         self._thread = None
         self._config = {
             "symbols": ["XAUUSD"],
-            "analysis_interval": 60,      # seconds between analysis cycles
-            "candle_interval": 300,       # seconds between candle fetches
-            "review_hour": 0,             # hour to run daily review (0-23, UTC)
-            "evolution_interval": 86400,  # seconds between evolution cycles
-            "trade_sync_interval": 30,    # seconds between trade syncs
+            "analysis_interval": 300,      # seconds between analysis cycles (5min default)
+            "candle_interval": 300,        # seconds between candle fetches
+            "review_hour": 0,              # hour to run daily review (0-23, UTC)
+            "evolution_interval": 86400,   # seconds between evolution cycles
+            "trade_sync_interval": 30,     # seconds between trade syncs
             "trailing_check_interval": 15, # seconds between trailing stop checks
+            "mode": "committee",           # "single" (old) or "committee" (multi-agent)
+            "auto_execute": False,         # auto-execute approved signals
+            "auto_approve_confidence": 70, # auto-approve if confidence >= this
+            "last_committee_result": None, # cache last committee result
         }
         self._last_candle_fetch = 0
         self._last_analysis = 0
@@ -151,11 +156,30 @@ class TradingScheduler:
         results = {}
         for symbol in self._config["symbols"]:
             try:
-                result = engine.generate_signal(symbol)
+                if self._config.get("mode") == "committee":
+                    result = self._do_committee_analysis(symbol)
+                else:
+                    result = engine.generate_signal(symbol)
                 results[symbol] = result
-                if result.get("signal_id"):
+
+                # Auto-approve and auto-execute
+                if result.get("ok") and result.get("direction") in ("BUY", "SELL"):
+                    confidence = result.get("confidence", 0)
+                    if confidence >= self._config.get("auto_approve_confidence", 70):
+                        signal_id = result.get("signal_id")
+                        if signal_id:
+                            conn = db.get_conn()
+                            conn.execute("UPDATE signals SET status='approved' WHERE id=? AND status='pending'", (signal_id,))
+                            conn.commit()
+                            logger.info("Auto-approved signal %s (conf=%d)", signal_id, confidence)
+
+                            if self._config.get("auto_execute"):
+                                exec_result = engine.execute_signal(signal_id)
+                                result["executed"] = exec_result
+                                logger.info("Auto-executed signal %s: %s", signal_id, exec_result)
+
                     logger.info("Signal: %s %s conf=%d sl=%.2f tp=%.2f",
-                                symbol, result.get("direction"), result.get("confidence"),
+                                symbol, result.get("direction"), result.get("confidence", 0),
                                 result.get("stop_loss", 0), result.get("take_profit", 0))
             except Exception as e:
                 logger.exception("Analysis failed for %s", symbol)
@@ -163,6 +187,55 @@ class TradingScheduler:
 
         self._status["last_signals"] = results
         return results
+
+    def _do_committee_analysis(self, symbol: str) -> dict:
+        """Run multi-agent committee analysis for a symbol."""
+        # Collect market data
+        market_data = engine.collect_market_data(symbol)
+        if not market_data.get("ok"):
+            return market_data
+
+        # Run committee
+        result = trading_agents.run_committee(market_data, symbol)
+        self._config["last_committee_result"] = result
+
+        decision = result.get("decision", {})
+
+        # Store signal if BUY/SELL
+        signal_id = None
+        if decision.get("direction") in ("BUY", "SELL") and decision.get("confidence", 0) >= 60:
+            conn = db.get_conn()
+            now = time.time()
+            cursor = conn.execute(
+                """INSERT INTO signals (symbol, direction, confidence, entry_price, stop_loss, take_profit,
+                   lot_size, reason, indicators, risk_pct, mode, status, created_at, expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, decision["direction"], decision.get("confidence", 60),
+                 decision.get("entry_price", market_data["price"]),
+                 decision.get("stop_loss", 0), decision.get("take_profit", 0),
+                 decision.get("lot_size_suggestion", 0.01),
+                 decision.get("reasoning", ""),
+                 json.dumps(market_data["indicators"]),
+                 1.0, "committee",
+                 "pending", now, now + 600)
+            )
+            conn.commit()
+            signal_id = cursor.lastrowid
+
+        return {
+            "ok": True,
+            "signal_id": signal_id,
+            "symbol": symbol,
+            "direction": decision.get("direction", "HOLD"),
+            "confidence": decision.get("confidence", 0),
+            "entry_price": decision.get("entry_price", 0),
+            "stop_loss": decision.get("stop_loss", 0),
+            "take_profit": decision.get("take_profit", 0),
+            "reasons": decision.get("reasoning", ""),
+            "mode": "committee",
+            "analyst_count": len(result.get("analyst_opinions", [])),
+            "total_latency_ms": result.get("total_latency_ms", 0),
+        }
 
     def _do_trailing_stops(self):
         """Check and update trailing stops for open positions."""
