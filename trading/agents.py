@@ -144,12 +144,12 @@ AGENT_ROLES = {
 MODEL_PROVIDERS = {
     "mimo": {
         "name": "MiMo",
-        "base_url": "https://api.xiaomi.com/v1",
-        "default_model": "MiMo-v2.5-pro",
+        "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "default_model": "mimo-v2.5-pro",
         "description": "小米 MiMo 模型",
         "models": [
-            {"id": "MiMo-v2.5-pro", "name": "MiMo v2.5 Pro", "speed": "中"},
-            {"id": "MiMo-v2.5", "name": "MiMo v2.5", "speed": "快"},
+            {"id": "mimo-v2.5-pro", "name": "MiMo v2.5 Pro", "speed": "中"},
+            {"id": "mimo-v2.5", "name": "MiMo v2.5", "speed": "快"},
         ],
     },
     "deepseek": {
@@ -204,9 +204,13 @@ def _call_llm(base_url: str, api_key: str, model: str, system_prompt: str, user_
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
+    # Bypass proxy — API calls should go direct
+    proxy_handler = urllib.request.ProxyHandler({})
+    opener = urllib.request.build_opener(proxy_handler, urllib.request.HTTPSHandler(context=ctx))
+
     for attempt in range(2):
         try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 content = result["choices"][0]["message"]["content"]
                 # Some models wrap thinking in <think> tags, strip them for clean output
