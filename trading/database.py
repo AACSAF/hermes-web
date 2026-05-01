@@ -171,6 +171,30 @@ def init_db():
         value TEXT NOT NULL,
         updated_at REAL NOT NULL
     );
+
+    -- Agent configurations (multi-agent trading system)
+    CREATE TABLE IF NOT EXISTS agent_configs (
+        agent_id TEXT PRIMARY KEY,
+        name TEXT,
+        enabled INTEGER DEFAULT 1,
+        provider TEXT DEFAULT 'mimo',     -- mimo / deepseek / minimax
+        api_key TEXT DEFAULT '',
+        model TEXT DEFAULT '',
+        frequency TEXT DEFAULT 'medium',  -- high / medium / low
+        system_prompt TEXT DEFAULT '',
+        weight REAL DEFAULT 1.0,
+        updated_at REAL NOT NULL
+    );
+
+    -- Agent call log (for performance tracking)
+    CREATE TABLE IF NOT EXISTS agent_call_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        latency_ms INTEGER DEFAULT 0,
+        has_error INTEGER DEFAULT 0,
+        created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_call_log_agent ON agent_call_log(agent_id, created_at);
     """)
     conn.commit()
 

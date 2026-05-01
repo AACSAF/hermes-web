@@ -457,9 +457,12 @@
       <button class="nav-btn" id="navTrading" onclick="switchPanel('trading')">
         <span class="nav-icon">🤖</span> AI 交易
       </button>
+      <button class="nav-btn" id="navAgents" onclick="switchPanel('agents')">
+        <span class="nav-icon">⚙️</span> Agent 设置
+      </button>
       <div class="spacer"></div>
       <div style="padding:8px 14px;font-size:11px;color:var(--text-muted);line-height:1.5;">
-        v0.11 · MiMo
+        v0.12 · 多Agent
       </div>
     </nav>
 
@@ -578,6 +581,7 @@
           <button class="btn btn-outline btn-sm" onclick="analyzeSymbol()">📊 指标分析</button>
           <button class="btn btn-primary btn-sm" onclick="aiAnalyze()">🧠 AI 智能分析</button>
           <button class="btn btn-outline btn-sm" onclick="generateSignal()">⚡ 生成信号</button>
+          <button class="btn btn-primary btn-sm" onclick="runCommittee()" style="background:linear-gradient(135deg,#7c5cff,#b388ff)">🏛️ 委员会分析</button>
         </div>
 
         <!-- Analysis result -->
@@ -623,6 +627,46 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ═══ AGENT SETTINGS PANEL ═══ -->
+    <div class="panel" id="panelAgents">
+      <div class="panel-header">
+        <h2>⚙️ Agent 委员会设置</h2>
+        <div class="header-right">
+          <button class="btn btn-outline btn-sm" onclick="loadAgentConfigs()">🔄 刷新</button>
+        </div>
+      </div>
+      <div class="mt5-content" style="padding:20px;overflow-y:auto;">
+
+        <!-- Global API Keys -->
+        <div class="section" style="margin-bottom:16px;">
+          <div class="section-header">
+            <h3>🔑 全局 API Keys</h3>
+            <button class="btn btn-outline btn-sm" onclick="saveGlobalKeys()">保存</button>
+          </div>
+          <div style="padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;" id="globalKeysArea">
+            <div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">🧠 MiMo (小米)</div>
+              <input type="password" id="key_mimo" placeholder="XIAOMI_API_KEY" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;">
+              <div style="font-size:10px;color:var(--text-muted);margin-top:4px;" id="key_mimo_status"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">🤖 DeepSeek</div>
+              <input type="password" id="key_deepseek" placeholder="DEEPSEEK_API_KEY" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;">
+              <div style="font-size:10px;color:var(--text-muted);margin-top:4px;" id="key_deepseek_status"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">💬 MiniMax</div>
+              <input type="password" id="key_minimax" placeholder="MINIMAX_API_KEY" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;">
+              <div style="font-size:10px;color:var(--text-muted);margin-top:4px;" id="key_minimax_status"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agent Cards -->
+        <div id="agentCardsArea" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;"></div>
 
       </div>
     </div>
@@ -1411,10 +1455,242 @@
         showToast('进化完成');
       } catch(e) { showToast('进化失败', true); }
     }
+
+    // ══════════════════════════════════════════════════════
+    // Agent Committee
+    // ══════════════════════════════════════════════════════
+    const FREQ_LABELS = {high:'🔴 高频', medium:'🟡 中频', low:'🟢 低频'};
+    const FREQ_COLORS = {high:'var(--error)', medium:'var(--warn)', low:'var(--success)'};
+
+    let agentConfigs = [];
+
+    async function loadAgentConfigs() {
+      try {
+        const r = await fetch('/api/agents');
+        const d = await r.json();
+        if (!d.ok) return;
+        agentConfigs = d.agents;
+        renderAgentCards(d.agents, d.providers);
+        loadGlobalKeyStatus();
+      } catch(e) { console.error('loadAgentConfigs', e); }
+    }
+
+    async function loadGlobalKeyStatus() {
+      try {
+        const r = await fetch('/api/agents/global-keys');
+        const d = await r.json();
+        if (!d.ok) return;
+        for (const [provider, masked] of Object.entries(d.keys)) {
+          const statusEl = $('key_' + provider + '_status');
+          if (statusEl) {
+            statusEl.textContent = masked ? '✅ 已配置: ' + masked : '❌ 未配置';
+            statusEl.style.color = masked ? 'var(--success)' : 'var(--error)';
+          }
+        }
+      } catch(e) {}
+    }
+
+    async function saveGlobalKeys() {
+      const keys = {};
+      for (const p of ['mimo', 'deepseek', 'minimax']) {
+        const val = $('key_' + p).value.trim();
+        if (val) keys[p] = val;
+      }
+      if (Object.keys(keys).length === 0) { showToast('请填写至少一个 API Key', true); return; }
+      try {
+        const r = await fetch('/api/agents/global-keys', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(keys)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          showToast('API Keys 保存成功');
+          // Clear inputs
+          for (const p of ['mimo', 'deepseek', 'minimax']) $('key_' + p).value = '';
+          loadGlobalKeyStatus();
+        }
+      } catch(e) { showToast('保存失败', true); }
+    }
+
+    function renderAgentCards(agents, providers) {
+      const area = $('agentCardsArea');
+      if (!area) return;
+      let html = '';
+      for (const a of agents) {
+        const freqLabel = FREQ_LABELS[a.frequency] || a.frequency;
+        const freqColor = FREQ_COLORS[a.frequency] || 'var(--text-muted)';
+        const stats = a.stats || {};
+        const enabledChecked = a.enabled ? 'checked' : '';
+        const providerOptions = Object.entries(providers || {}).map(([k, v]) =>
+          `<option value="${k}" ${a.provider===k?'selected':''}>${v.name}</option>`
+        ).join('');
+
+        html += `<div class="section" style="overflow:visible;">
+          <div class="section-header" style="gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="checkbox" id="ae_${a.agent_id}" ${enabledChecked} onchange="toggleAgent('${a.agent_id}', this.checked)" style="accent-color:var(--accent);">
+                <strong style="font-size:14px;">${a.name}</strong>
+              </label>
+            </div>
+            <span style="font-size:11px;padding:3px 10px;border-radius:10px;background:${freqColor}22;color:${freqColor};border:1px solid ${freqColor}44;">${freqLabel}</span>
+          </div>
+          <div style="padding:14px;">
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">${a.description}</div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">模型提供商</div>
+                <select id="ap_${a.agent_id}" onchange="updateAgentField('${a.agent_id}','provider',this.value)"
+                  style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
+                  ${providerOptions}
+                </select>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">调用频率</div>
+                <select id="af_${a.agent_id}" onchange="updateAgentField('${a.agent_id}','frequency',this.value)"
+                  style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text-primary);font-size:12px;">
+                  <option value="high" ${a.frequency==='high'?'selected':''}>🔴 高频 — 每次分析都调用</option>
+                  <option value="medium" ${a.frequency==='medium'?'selected':''}>🟡 中频 — 条件触发</option>
+                  <option value="low" ${a.frequency==='low'?'selected':''}>🟢 低频 — 每日/定时</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+              <div style="font-size:11px;color:var(--text-muted);">权重</div>
+              <input type="range" id="aw_${a.agent_id}" min="0.1" max="3" step="0.1" value="${a.weight||1}"
+                onchange="updateAgentField('${a.agent_id}','weight',parseFloat(this.value))"
+                style="flex:1;accent-color:var(--accent);">
+              <span style="font-size:12px;color:var(--text-primary);min-width:30px;" id="awv_${a.agent_id}">${(a.weight||1).toFixed(1)}</span>
+            </div>
+
+            <!-- Stats bar -->
+            <div style="display:flex;gap:16px;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;font-size:11px;">
+              <span>📞 调用 <strong>${stats.total_calls||0}</strong> 次</span>
+              <span>⚡ 延迟 <strong>${stats.avg_latency||0}</strong> ms</span>
+              <span style="color:${(stats.errors||0)>0?'var(--error)':'var(--text-muted)'}">❌ 错误 <strong>${stats.errors||0}</strong></span>
+            </div>
+
+            <div style="margin-top:8px;text-align:right;">
+              <button class="btn btn-outline btn-sm" onclick="testAgent('${a.agent_id}')" style="font-size:11px;">🧪 测试</button>
+            </div>
+          </div>
+        </div>`;
+      }
+      area.innerHTML = html;
+    }
+
+    async function toggleAgent(agentId, enabled) {
+      try {
+        await fetch('/api/agents/' + agentId, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({enabled: enabled ? 1 : 0})
+        });
+        showToast(enabled ? '已启用' : '已禁用');
+      } catch(e) { showToast('操作失败', true); }
+    }
+
+    async function updateAgentField(agentId, field, value) {
+      try {
+        const body = {}; body[field] = value;
+        await fetch('/api/agents/' + agentId, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        if (field === 'weight') {
+          const v = $('awv_' + agentId);
+          if (v) v.textContent = parseFloat(value).toFixed(1);
+        }
+      } catch(e) { showToast('更新失败', true); }
+    }
+
+    async function testAgent(agentId) {
+      showToast('测试 ' + agentId + ' ...');
+      try {
+        const r = await fetch('/api/agents/' + agentId + '/test', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({})
+        });
+        const d = await r.json();
+        if (d.ok) {
+          showToast('✅ 测试成功 (' + d.latency_ms + 'ms)');
+        } else {
+          showToast('❌ ' + (d.error || '测试失败'), true);
+        }
+      } catch(e) { showToast('测试失败', true); }
+    }
+
+    async function runCommittee() {
+      const symbol = $('tradeSymbol') ? $('tradeSymbol').value : 'XAUUSD';
+      showToast('🏛️ 委员会分析中...');
+      const resultDiv = $('analysisResult');
+      if (resultDiv) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div style="padding:20px;text-align:center;"><div class="spinner"></div> 多Agent委员会分析中，预计10-30秒...</div>';
+      }
+      try {
+        const r = await fetch('/api/trading/committee', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({symbol})
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          if (resultDiv) resultDiv.innerHTML = '<div style="padding:16px;color:var(--error);">' + escHtml(d.error || '分析失败') + '</div>';
+          showToast('分析失败', true); return;
+        }
+
+        let html = '<div style="padding:16px;">';
+        // Decision
+        const dec = d.decision || {};
+        const decColor = dec.direction === 'BUY' ? 'var(--success)' : dec.direction === 'SELL' ? 'var(--error)' : 'var(--warn)';
+        html += `<div style="margin-bottom:16px;">
+          <div style="font-size:18px;font-weight:700;color:${decColor};">🏛️ 委员会决策: ${dec.direction || 'HOLD'}</div>
+          <div style="font-size:13px;color:var(--text-secondary);margin-top:4px;">置信度: ${dec.confidence||0}% | 总延迟: ${d.total_latency_ms||0}ms</div>
+          ${dec.entry_price ? `<div style="font-size:12px;margin-top:4px;">入场: ${dec.entry_price} | 止损: ${dec.stop_loss||'-'} | 止盈: ${dec.take_profit||'-'}</div>` : ''}
+          <div style="font-size:13px;margin-top:8px;color:var(--text-primary);">${escHtml(dec.reasoning||'')}</div>
+          ${dec.risk_note ? `<div style="font-size:12px;margin-top:4px;color:var(--warn);">⚠️ ${escHtml(dec.risk_note)}</div>` : ''}
+        </div>`;
+
+        // Analyst opinions
+        if (d.analyst_opinions && d.analyst_opinions.length) {
+          html += '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:8px;">';
+          html += '<div style="font-size:13px;font-weight:600;margin-bottom:8px;">📋 各Agent意见</div>';
+          for (const op of d.analyst_opinions) {
+            const statusIcon = op.error ? '❌' : '✅';
+            html += `<div style="margin-bottom:10px;padding:10px;background:var(--bg-tertiary);border-radius:8px;border-left:3px solid ${op.error?'var(--error)':'var(--accent)'};">
+              <div style="font-size:12px;font-weight:600;margin-bottom:4px;">${statusIcon} ${escHtml(op.name)} <span style="color:var(--text-muted);font-weight:400;">(${op.latency_ms||0}ms)</span></div>
+              <div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap;max-height:120px;overflow-y:auto;">${escHtml(op.error || op.response || '无响应')}</div>
+            </div>`;
+          }
+          html += '</div>';
+        }
+
+        // Signal info
+        if (d.signal_id) {
+          html += `<div style="margin-top:12px;padding:8px 12px;background:var(--success-dim);border-radius:8px;font-size:12px;color:var(--success);">✅ 信号已创建 (ID: ${d.signal_id})</div>`;
+          loadSignals();
+        }
+
+        html += '</div>';
+        if (resultDiv) resultDiv.innerHTML = html;
+        showToast('委员会分析完成');
+      } catch(e) {
+        if (resultDiv) resultDiv.innerHTML = '<div style="padding:16px;color:var(--error);">分析请求失败: ' + e.message + '</div>';
+        showToast('分析失败', true);
+      }
+    }
+
+    function escHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
     // ══════════════════════════════════════════════════════
     // Init
     // ══════════════════════════════════════════════════════
     loadSessions();
+    loadAgentConfigs();
     $('inputBox').focus();
   </script>
 </body>

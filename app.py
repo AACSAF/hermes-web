@@ -42,6 +42,7 @@ from trading import engine
 from trading import risk
 from trading import review
 from trading import evolution
+from trading import agents as trading_agents
 from trading.scheduler import scheduler
 
 db.init_db()
@@ -573,6 +574,120 @@ async def handle_review_history(request):
 
 # ── Evolution API ──────────────────────────────────────────────────
 
+
+# ── Agent Committee API ────────────────────────────────────────────
+
+async def handle_agents_list(request):
+    """GET /api/agents — list all agent configs."""
+    configs = trading_agents.get_all_agent_configs()
+    stats = trading_agents.get_agent_stats(days=7)
+    stats_map = {s["agent_id"]: s for s in stats}
+    result = []
+    for c in configs:
+        s = stats_map.get(c["agent_id"], {})
+        c["stats"] = {
+            "total_calls": s.get("total_calls", 0),
+            "avg_latency": round(s.get("avg_latency", 0)),
+            "errors": s.get("errors", 0),
+        }
+        result.append(c)
+    return web.json_response({"ok": True, "agents": result, "providers": trading_agents.MODEL_PROVIDERS})
+
+
+async def handle_agent_update(request):
+    """POST /api/agents/{agent_id} — update agent config."""
+    agent_id = request.match_info["agent_id"]
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    result = trading_agents.update_agent_config(agent_id, data)
+    return web.json_response(result)
+
+
+async def handle_agent_test(request):
+    """POST /api/agents/{agent_id}/test — test a single agent."""
+    agent_id = request.match_info["agent_id"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    prompt = data.get("prompt", "请简单介绍一下你自己，以及你作为交易分析师的专长。")
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, trading_agents.run_single_agent, agent_id, prompt)
+    return web.json_response(result)
+
+
+async def handle_agent_global_keys(request):
+    """POST /api/agents/global-keys — set global API keys for providers."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    for provider, key in data.items():
+        if key:
+            db.kv_set(f"api_key_{provider}", key)
+    return web.json_response({"ok": True})
+
+
+async def handle_agent_global_keys_get(request):
+    """GET /api/agents/global-keys — get global API key status (masked)."""
+    keys = {}
+    for provider in trading_agents.MODEL_PROVIDERS:
+        full_key = trading_agents._get_api_key_for_provider(provider)
+        if full_key:
+            keys[provider] = full_key[:8] + "..." + full_key[-4:] if len(full_key) > 12 else "***"
+        else:
+            keys[provider] = ""
+    return web.json_response({"ok": True, "keys": keys})
+
+
+async def handle_trading_committee(request):
+    """POST /api/trading/committee — run multi-agent committee analysis."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    symbol = data.get("symbol", "XAUUSD")
+
+    loop = asyncio.get_event_loop()
+
+    # Collect market data
+    market_data = await loop.run_in_executor(None, engine.collect_market_data, symbol)
+    if not market_data.get("ok"):
+        return web.json_response(market_data)
+
+    # Run committee
+    result = await loop.run_in_executor(None, trading_agents.run_committee, market_data, symbol)
+
+    # Store signal if decision is BUY/SELL
+    decision = result.get("decision", {})
+    if decision.get("direction") in ("BUY", "SELL") and decision.get("confidence", 0) >= 60:
+        conn = db.get_conn()
+        now = time.time()
+        cursor = conn.execute(
+            """INSERT INTO signals (symbol, direction, confidence, entry_price, stop_loss, take_profit,
+               lot_size, reason, indicators, risk_pct, mode, status, created_at, expires_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (symbol, decision["direction"], decision.get("confidence", 60),
+             decision.get("entry_price", market_data["price"]),
+             decision.get("stop_loss", 0), decision.get("take_profit", 0),
+             decision.get("lot_size_suggestion", 0.01),
+             decision.get("reasoning", ""),
+             json.dumps(market_data["indicators"]),
+             1.0, "committee",
+             "pending", now, now + 600)
+        )
+        conn.commit()
+        result["signal_id"] = cursor.lastrowid
+
+    result["market_data"] = {
+        "price": market_data["price"],
+        "trend": market_data["trend"],
+        "indicators": market_data["indicators"],
+    }
+    return web.json_response(result)
+
 async def handle_evolution_params(request):
     """GET /api/evolution/params — current strategy parameters."""
     params = db.get_all_params()
@@ -714,6 +829,14 @@ def create_app():
     app.router.add_post("/api/evolution/run", handle_evolution_run)
     app.router.add_get("/api/evolution/history", handle_evolution_history)
     app.router.add_get("/api/evolution/rules", handle_evolution_rules)
+
+    # Agent Committee
+    app.router.add_get("/api/agents", handle_agents_list)
+    app.router.add_post("/api/agents/{agent_id}", handle_agent_update)
+    app.router.add_post("/api/agents/{agent_id}/test", handle_agent_test)
+    app.router.add_get("/api/agents/global-keys", handle_agent_global_keys_get)
+    app.router.add_post("/api/agents/global-keys", handle_agent_global_keys)
+    app.router.add_post("/api/trading/committee", handle_trading_committee)
 
     # Scheduler
     app.router.add_get("/api/scheduler/status", handle_scheduler_status)
